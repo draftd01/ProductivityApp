@@ -5,6 +5,7 @@ Kept separate from views.py so the views stay thin. Called by:
   - CalendarView  (views.py) -> calendar_events()
   - StatsView     (views.py) -> progress_stats()
   - TaskViewSet.history (views.py) -> series_history()
+  - TaskViewSet.projection (views.py) -> series_projection()
 
 All "which day did this happen" questions use the local TIME_ZONE from
 config/settings.py, via timezone.localtime()/localdate().
@@ -13,6 +14,7 @@ from datetime import timedelta
 
 from django.utils import timezone
 
+from . import recurrence
 from .models import Task
 
 
@@ -21,12 +23,65 @@ def _local_date(dt):
     return timezone.localtime(dt).date()
 
 
+def projected_dates(task, start, end):
+    """
+    Future dates (within [start, end]) on which an open repeating task will
+    recur, counting from its due date. Display only - nothing is created.
+
+    Only dates from today onward are returned: completing an overdue task
+    skips missed dates (recurrence.next_due_date), so past projections would
+    never become real. Tasks with no due date have nothing to count from.
+    """
+    if not task.is_open or not task.is_recurring or task.due_date is None:
+        return []
+    return recurrence.occurrences_between(
+        task.repeat_type,
+        task.repeat_interval,
+        recurrence.parse_days(task.repeat_days),
+        base=task.due_date,
+        start=max(start, timezone.localdate()),
+        end=end,
+        end_date=task.repeat_end_date,
+    )
+
+
+def _latest_open_per_series(qs):
+    """
+    The open occurrence with the latest due date for each repeating series in
+    `qs`. Normally a series has one open occurrence; this guards against
+    duplicates (e.g. an old occurrence re-opened) projecting twice.
+    """
+    latest = {}
+    open_repeating = qs.filter(
+        is_completed=False, is_ignored=False, due_date__isnull=False
+    ).exclude(
+        repeat_type=recurrence.REPEAT_NONE
+    )
+    for task in open_repeating:
+        current = latest.get(task.series_id)
+        if current is None or task.due_date > current.due_date:
+            latest[task.series_id] = task
+    return list(latest.values())
+
+
+def series_projection(task, start, end):
+    """
+    Projected dates for the series `task` belongs to, counted from the
+    series' current open occurrence - so it works even when `task` is an
+    older, completed occurrence. Used by the per-task calendar.
+    """
+    open_tasks = _latest_open_per_series(Task.objects.filter(series_id=task.series_id))
+    return projected_dates(open_tasks[0], start, end) if open_tasks else []
+
+
 def calendar_events(start, end, project_id=None):
     """
     Return a list of event dicts for every task created, completed or due
-    between `start` and `end` (inclusive dates).
+    between `start` and `end` (inclusive dates), plus "projected" events for
+    future repeats of open repeating tasks (see projected_dates).
 
-    Each event: {date, type, task_id, title, is_completed, project_color}.
+    Each event: {date, type, task_id, title, is_completed, is_ignored, project_color}.
+    Ignored tasks still appear (so they can be opened), flagged with is_ignored.
     The frontend groups these by date in src/pages/CalendarPage.jsx.
     """
     qs = Task.objects.select_related("project")
@@ -39,10 +94,11 @@ def calendar_events(start, end, project_id=None):
         events.append(
             {
                 "date": date,
-                "type": kind,
+                "type": kind, # possible values: ["created", "completed", "due", "projected"]
                 "task_id": task.id,
                 "title": task.title,
                 "is_completed": task.is_completed,
+                "is_ignored": task.is_ignored,
                 "project_color": task.project.color if task.project else None,
             }
         )
@@ -54,6 +110,11 @@ def calendar_events(start, end, project_id=None):
         add(task, _local_date(task.completed_at), "completed")
     for task in qs.filter(due_date__range=(start, end)):
         add(task, task.due_date, "due")
+    # Future repeats of open repeating tasks. They point at the open task, so
+    # clicking one opens the occurrence you can actually edit.
+    for task in _latest_open_per_series(qs):
+        for d in projected_dates(task, start, end):
+            add(task, d, "projected")
 
     events.sort(key=lambda e: (e["date"], e["type"], e["title"].lower()))
     return events
@@ -73,7 +134,8 @@ def progress_stats(days=30):
     Build the numbers for the Progress page (src/pages/ProgressPage.jsx).
 
     Returns:
-      totals            : counts of open / completed / overdue tasks
+      totals            : counts of open / completed / overdue / ignored tasks
+                          (open and overdue exclude ignored tasks)
       completed_today   : tasks completed today
       completed_this_week: since Monday
       current_streak    : consecutive days (ending today, or yesterday if
@@ -133,13 +195,14 @@ def progress_stats(days=30):
         previous = d
 
     week_start = today - timedelta(days=today.weekday())
-    open_qs = Task.objects.filter(is_completed=False)
+    open_qs = Task.objects.filter(is_completed=False, is_ignored=False)
 
     return {
         "totals": {
             "open": open_qs.count(),
             "completed": len(completed_dates),
             "overdue": open_qs.filter(due_date__lt=today).count(),
+            "ignored": Task.objects.filter(is_ignored=True).count(),
         },
         "completed_today": completed_counts.get(today, 0),
         "completed_this_week": sum(

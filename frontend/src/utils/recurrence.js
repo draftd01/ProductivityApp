@@ -45,7 +45,7 @@ export function backendWeekday(date) {
  * Work out which preset a task's stored rule corresponds to, so the dropdown
  * shows the right option. Anything unusual is shown as "custom".
  */
-export function presetFromTask(task) {
+export function repeatPresetFromTask(task) {
   const type = task.repeat_type;
   const interval = task.repeat_interval || 1;
   const days = task.repeat_days_list || [];
@@ -66,7 +66,7 @@ export function presetFromTask(task) {
  * Convert a preset into the rule fields to PATCH onto the task.
  * "weekly" repeats on the weekday of the due date (or today if none).
  */
-export function ruleFromPreset(preset, dueDate) {
+export function repeatRuleFromPreset(preset, dueDate) {
   const anchor = parseISODate(dueDate) || new Date();
   switch (preset) {
     case "daily":

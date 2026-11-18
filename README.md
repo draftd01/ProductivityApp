@@ -4,14 +4,15 @@ A single-user task tracker, loosely modeled on Asana. The backend is Django + Dj
 
 ## Features
 
-- **Tasks** with a title, description, project, priority and due date.
-- **Projects** to group tasks, shown in the sidebar with open-task counts.
-- **Repeating tasks**: every day, every weekday (Mon–Fri), every weekend, weekly, monthly or yearly. A custom option lets you pick every *N* days/weeks/months/years, choose specific weekdays and set an end date.
-- **Completed tasks are kept.** Completing a task records `completed_at`. Completing a repeating task also schedules the next occurrence, so you get a full history of every completion.
-- **Notes** under each task, with timestamps. You can edit and delete them.
-- **Per-task calendar** in the task panel that marks the days the task was created, is due and was completed, including every completion of a repeating task.
-- **Calendar page** with a month view of everything created, due and completed. You can filter it by event type or project.
-- **Progress page** with completions today and this week, current and longest streaks, overdue count, a per-day completion chart (30/90/365 days) and recent completions.
+- <u>**Tasks**</u> with a title, description, project, priority and due date.
+- <u>**Projects**</u> to group tasks, shown in the sidebar with open-task counts.
+- <u>**Repeating tasks**</u>: every day, every weekday (Mon–Fri), every weekend, weekly, monthly or yearly. A custom option lets you pick every *N* days/weeks/months/years, choose specific weekdays and set an end date.
+- <u>**Completed tasks are kept.**</u> Completing a task records `completed_at`. Completing a repeating task also schedules the next occurrence, so you get a full history of every completion.
+- <u>**Ignoring overdue tasks.**</u> If a task is past due and you've decided to skip it, click **Ignore**. It stays in the database with its notes, appears under **Ignored** in the sidebar, and no longer counts as overdue. Ignoring a repeating task still schedules its next occurrence. **Restore** reopens an ignored task.
+- <u>**Notes**</u> under each task, with timestamps. You can edit and delete them.
+- <u>**Per-task calendar**</u> in the task panel that marks the days the task was created, is due and was completed, including every completion of a repeating task.
+- <u>**Calendar page**</u> with a month view of everything created, due and completed. You can filter it by event type or project.
+- <u>**Progress page**</u> with completions today and this week, current and longest streaks, overdue count, a per-day completion chart (30/90/365 days) and recent completions.
 
 ## Setup (Windows)
 
@@ -78,10 +79,12 @@ Shared frontend helpers:
 |---|---|---|
 | GET/POST | `/api/projects/` | list / create projects |
 | PATCH/DELETE | `/api/projects/<id>/` | edit / delete a project (its tasks are kept) |
-| GET/POST | `/api/tasks/?status=open\|completed\|all&view=today\|upcoming\|overdue&project=<id>&search=` | list / create tasks |
+| GET/POST | `/api/tasks/?status=open\|completed\|ignored\|all&view=today\|upcoming\|overdue&project=<id>&search=` | list / create tasks (`open` excludes ignored) |
 | GET/PATCH/DELETE | `/api/tasks/<id>/` | one task |
 | POST | `/api/tasks/<id>/complete/` | complete (returns `next_occurrence` for repeating tasks) |
 | POST | `/api/tasks/<id>/uncomplete/` | reopen |
+| POST | `/api/tasks/<id>/ignore/` | ignore an overdue task (returns `next_occurrence` for repeating tasks; 400 if not overdue) |
+| POST | `/api/tasks/<id>/unignore/` | restore an ignored task to open |
 | GET | `/api/tasks/<id>/history/` | every occurrence in a repeat series |
 | GET/POST | `/api/tasks/<id>/notes/` | list / add notes |
 | PATCH/DELETE | `/api/notes/<id>/` | edit / delete a note |

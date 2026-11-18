@@ -8,8 +8,12 @@
  *   upcoming    open, due after today               Tomorrow / This week / Later
  *   all         open                                Overdue / Today / ... / No date
  *   completed   completed (newest first)            completion day
- *   project     tasks in :projectId (open, or all   due date, + Completed group
- *               when "Show completed" is ticked)
+ *   ignored     ignored (newest first)              one "Ignored" group
+ *   project     tasks in :projectId (open, or all   due date, + Completed and
+ *               when "Show completed & ignored"     Ignored groups
+ *               is ticked)
+ *
+ * Overdue rows get an "Ignore" button (see TaskRow.jsx / useTaskToggle.js).
  *
  * Children: QuickAddTask (create), TaskList -> TaskRow (list),
  * TaskDetailPanel (edit the selected task).
@@ -28,6 +32,7 @@ const TITLES = {
   upcoming: "Upcoming",
   all: "All open tasks",
   completed: "Completed",
+  ignored: "Ignored",
 };
 
 const EMPTY_MESSAGES = {
@@ -35,6 +40,8 @@ const EMPTY_MESSAGES = {
   upcoming: "No upcoming tasks with a due date.",
   all: "No open tasks. 🎉",
   completed: "No completed tasks yet. Finished tasks are kept here so you can see your progress.",
+  ignored:
+    "No ignored tasks. Overdue tasks you choose to ignore are kept here, with their notes, and don't count as overdue.",
   project: "No tasks in this project yet.",
 };
 
@@ -96,6 +103,7 @@ export default function TasksPage({ mode, projects, refreshProjects }) {
     if (mode === "upcoming") Object.assign(p, { status: "open", view: "upcoming" });
     if (mode === "all") Object.assign(p, { status: "open" });
     if (mode === "completed") Object.assign(p, { status: "completed" });
+    if (mode === "ignored") Object.assign(p, { status: "ignored" });
     if (mode === "project")
       Object.assign(p, { project: projectId, status: showCompleted ? "all" : "open" });
     return p;
@@ -125,16 +133,19 @@ export default function TasksPage({ mode, projects, refreshProjects }) {
     await Promise.all([loadTasks(), refreshProjects()]);
   }, [loadTasks, refreshProjects]);
 
-  const { toggleComplete, toast } = useTaskToggle(afterChange);
+  const { toggleComplete, toggleIgnore, toast } = useTaskToggle(afterChange);
   const closePanel = useCallback(() => setSelectedId(null), []);
 
   /** Decide the groups shown by TaskList for the current mode. */
   const groups = useMemo(() => {
     if (mode === "completed") return groupCompletedTasks(tasks);
-    const open = tasks.filter((t) => !t.is_completed);
+    if (mode === "ignored") return [{ title: "Ignored", tasks }];
+    const open = tasks.filter((t) => !t.is_completed && !t.is_ignored);
     const done = tasks.filter((t) => t.is_completed);
+    const ignored = tasks.filter((t) => t.is_ignored);
     const result = groupOpenTasks(open);
     if (done.length) result.push({ title: "Completed", tasks: done });
+    if (ignored.length) result.push({ title: "Ignored", tasks: ignored });
     return result;
   }, [tasks, mode]);
 
@@ -158,7 +169,7 @@ export default function TasksPage({ mode, projects, refreshProjects }) {
                   checked={showCompleted}
                   onChange={(e) => setShowCompleted(e.target.checked)}
                 />{" "}
-                Show completed
+                Show completed &amp; ignored
               </label>
             )}
             <input
@@ -171,7 +182,7 @@ export default function TasksPage({ mode, projects, refreshProjects }) {
           </div>
         </header>
 
-        {mode !== "completed" && (
+        {mode !== "completed" && mode !== "ignored" && (
           <QuickAddTask
             defaultDueDate={mode === "today" ? todayISO() : ""}
             defaultProjectId={mode === "project" ? Number(projectId) : null}
@@ -187,6 +198,7 @@ export default function TasksPage({ mode, projects, refreshProjects }) {
             selectedId={selectedId}
             onSelect={(t) => setSelectedId(t.id)}
             onToggle={toggleComplete}
+            onIgnore={toggleIgnore}
             emptyMessage={search ? "No tasks match your search." : EMPTY_MESSAGES[mode]}
           />
         )}
@@ -199,6 +211,7 @@ export default function TasksPage({ mode, projects, refreshProjects }) {
           onClose={closePanel}
           onChanged={afterChange}
           onToggleComplete={toggleComplete}
+          onToggleIgnore={toggleIgnore}
         />
       )}
 

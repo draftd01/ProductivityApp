@@ -1,12 +1,60 @@
 """
 models.py - the database tables (Django models) for the app.
 
-Three models:
+Three models (each also gets an automatic `id` primary key, an integer):
+
   Project : an optional list/folder to group tasks (like an Asana project).
+      - name                : CharField (str, max 120 chars)
+      - color               : CharField (str, hex color like "#4f6bed")
+      - created_at          : DateTimeField (datetime, set automatically on create)
+      - tasks               : reverse side of Task.project, not a column
+                              (project.tasks.all() lists its tasks)
+
   Task    : a to-do item. Completed tasks are NEVER deleted automatically -
             they keep `completed_at`, which powers the calendar and progress
             pages. Repeating tasks store their rule here too.
+
+      Required user input (creating a task fails without it):
+      - title               : CharField (str, max 255 chars)
+
+      Optional user input (the default in [brackets] is used if omitted):
+      - description         : TextField (str, may be blank) [""]
+      - project             : ForeignKey -> Project (or None) [None]
+      - priority            : CharField (str: "low" | "medium" | "high") ["medium"]
+      - due_date            : DateField (date, or None) [None]
+      - repeat_type         : CharField (str: "none" | "daily" | "weekly" | "monthly" | "yearly") ["none"]
+      - repeat_interval     : PositiveIntegerField (int >= 1, "every N" units) [1]
+      - repeat_days         : CharField (str of weekday numbers, e.g. "0,1,2,3,4") [""]
+                              (the API accepts this as `repeat_days_list`, e.g. [0, 1, 2, 3, 4])
+      - repeat_end_date     : DateField (date, or None) [None]
+
+      Changed only by actions (complete / uncomplete / ignore / unignore),
+      read-only in the API:
+      - is_completed        : BooleanField (bool) [False]
+      - completed_at        : DateTimeField (datetime, or None while open) [None]
+      - is_ignored          : BooleanField (bool; an overdue task you chose to skip) [False]
+      - ignored_at          : DateTimeField (datetime, or None if not ignored) [None]
+
+      Set automatically, never by the user:
+      - created_at          : DateTimeField (datetime, set on create)
+      - updated_at          : DateTimeField (datetime, set on every save)
+      - series_id           : UUIDField (uuid, shared by all occurrences of a repeating task;
+                              new UUID for a new task, copied when the next occurrence is made)
+      - previous_occurrence : ForeignKey -> Task (or None; the occurrence before this one,
+                              set when completing/ignoring creates the next occurrence)
+
+      Reverse relations (not columns; access them as task.notes.all() etc.):
+      - notes               : reverse side of Note.task
+      - next_occurrences    : reverse side of previous_occurrence
+
   Note    : a timestamped note attached to one Task (one Task -> many Notes).
+      - task                : ForeignKey -> Task (deleting the task deletes its notes)
+      - body                : TextField (str)
+      - created_at          : DateTimeField (datetime, set automatically on create)
+      - updated_at          : DateTimeField (datetime, set automatically on every save)
+
+  Field types are Django's; the Python type in parentheses is what you get
+  when you read the attribute, e.g. task.due_date is a datetime.date.
 
 Referenced by:
   - tasks/serializers.py (converts these to/from JSON)
@@ -22,6 +70,16 @@ computed by tasks/recurrence.py). All occurrences share the same `series_id`,
 and each new one points back to the one before via `previous_occurrence`.
 So your history shows every individual completion, and notes stay attached
 to the specific day's occurrence they were written on.
+
+Task states
+-----------
+A task is in exactly one of three states:
+  open      : is_completed=False, is_ignored=False
+  completed : is_completed=True
+  ignored   : is_ignored=True  - an overdue task you decided to skip. It is
+              kept (with its notes) but no longer counts as open or overdue.
+              Ignoring an occurrence of a repeating task still schedules the
+              next one, just like completing it.
 """
 import uuid
 
@@ -66,7 +124,7 @@ class Task(models.Model):
     # --- Core fields -------------------------------------------------------
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True)
-    project = models.ForeignKey(
+    project = models.ForeignKey( # many-to-one relationship with Project
         Project,
         null=True,
         blank=True,
@@ -83,6 +141,9 @@ class Task(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     is_completed = models.BooleanField(default=False)
     completed_at = models.DateTimeField(null=True, blank=True)
+    # "Ignored" = an overdue task you chose to skip (see ignore() below).
+    is_ignored = models.BooleanField(default=False)
+    ignored_at = models.DateTimeField(null=True, blank=True)
 
     # --- Repeat rule (see tasks/recurrence.py for the meaning) -------------
     repeat_type = models.CharField(
@@ -118,10 +179,15 @@ class Task(models.Model):
         return self.repeat_type != recurrence.REPEAT_NONE
 
     @property
+    def is_open(self):
+        """True if the task is neither completed nor ignored."""
+        return not self.is_completed and not self.is_ignored
+
+    @property
     def is_overdue(self):
         """True if the task is open and its due date is before today."""
         return (
-            not self.is_completed
+            self.is_open
             and self.due_date is not None
             and self.due_date < timezone.localdate()
         )
@@ -131,6 +197,7 @@ class Task(models.Model):
     def complete(self):
         """
         Mark this task complete and, if it repeats, create the next occurrence.
+        Completing an ignored task is allowed and clears the ignored state.
 
         Returns the newly created next occurrence (a Task) or None.
         Called by TaskViewSet.complete in tasks/views.py.
@@ -140,10 +207,70 @@ class Task(models.Model):
 
         self.is_completed = True
         self.completed_at = timezone.now()
-        self.save(update_fields=["is_completed", "completed_at", "updated_at"])
+        self.is_ignored = False
+        self.ignored_at = None
+        self.save(
+            update_fields=["is_completed", "completed_at", "is_ignored", "ignored_at", "updated_at"]
+        )
+        return self._spawn_next()
 
-        # Only spawn the next occurrence once, even if the task is toggled
-        # complete -> incomplete -> complete again.
+    @transaction.atomic
+    def uncomplete(self):
+        """
+        Re-open a completed task.
+
+        If completing it had spawned a next occurrence that you haven't touched
+        yet (still open, no notes), that occurrence is removed so you don't end
+        up with duplicates. Called by TaskViewSet.uncomplete in tasks/views.py.
+        """
+        if not self.is_completed:
+            return
+        self.is_completed = False
+        self.completed_at = None
+        self.save(update_fields=["is_completed", "completed_at", "updated_at"])
+        self._remove_untouched_next()
+
+    @transaction.atomic
+    def ignore(self):
+        """
+        Skip an overdue task: it stays in the database with its notes, but no
+        longer counts as open or overdue. For a repeating task, the next
+        occurrence is scheduled just as if it had been completed.
+
+        Only open, overdue tasks can be ignored; anything else raises
+        ValueError (views.py turns that into a 400 response).
+        Returns the next occurrence (a Task) or None.
+        Called by TaskViewSet.ignore in tasks/views.py.
+        """
+        if not self.is_overdue:
+            raise ValueError("Only open tasks that are past due can be ignored.")
+        self.is_ignored = True
+        self.ignored_at = timezone.now()
+        self.save(update_fields=["is_ignored", "ignored_at", "updated_at"])
+        return self._spawn_next()
+
+    @transaction.atomic
+    def unignore(self):
+        """
+        Restore an ignored task to open (it will count as overdue again).
+        Like uncomplete(), removes an untouched next occurrence that ignoring
+        had created. Called by TaskViewSet.unignore in tasks/views.py.
+        """
+        if not self.is_ignored:
+            return
+        self.is_ignored = False
+        self.ignored_at = None
+        self.save(update_fields=["is_ignored", "ignored_at", "updated_at"])
+        self._remove_untouched_next()
+
+    # --- Helpers shared by the actions above -------------------------------
+    def _spawn_next(self):
+        """
+        If this task repeats, create its next occurrence and return it.
+        Used by complete() and ignore(). Returns None for non-repeating tasks,
+        when the series has reached its end date, or when a next occurrence
+        already exists (so toggling complete/ignore never creates duplicates).
+        """
         if not self.is_recurring or self.next_occurrences.exists():
             return None
 
@@ -174,23 +301,14 @@ class Task(models.Model):
             previous_occurrence=self,
         )
 
-    @transaction.atomic
-    def uncomplete(self):
+    def _remove_untouched_next(self):
         """
-        Re-open a completed task.
-
-        If completing it had spawned a next occurrence that you haven't touched
-        yet (still open, no notes), that occurrence is removed so you don't end
-        up with duplicates. Called by TaskViewSet.uncomplete in tasks/views.py.
+        Delete next occurrences that were auto-created but never used (still
+        open and without notes). Used by uncomplete() and unignore() so that
+        re-opening a task doesn't leave two open copies of it.
         """
-        if not self.is_completed:
-            return
-        self.is_completed = False
-        self.completed_at = None
-        self.save(update_fields=["is_completed", "completed_at", "updated_at"])
-
         for nxt in self.next_occurrences.all():
-            if not nxt.is_completed and not nxt.notes.exists():
+            if nxt.is_open and not nxt.notes.exists():
                 nxt.delete()
 
 

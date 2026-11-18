@@ -1,5 +1,6 @@
 /**
- * hooks/useTaskToggle.js - shared "complete / un-complete a task" logic.
+ * hooks/useTaskToggle.js - shared "complete / un-complete" and
+ * "ignore / restore" logic for tasks.
  *
  * A custom React hook (a function starting with "use" that can use other
  * hooks). Both TasksPage.jsx and CalendarPage.jsx need the same behaviour:
@@ -8,9 +9,10 @@
  *   3. let the page reload its data
  *
  * Usage:
- *   const { toggleComplete, toast } = useTaskToggle(afterChange);
+ *   const { toggleComplete, toggleIgnore, toast } = useTaskToggle(afterChange);
  *   ...
  *   <button onClick={() => toggleComplete(task)}>
+ *   <button onClick={() => toggleIgnore(task)}>   // overdue or ignored tasks
  *   {toast && <div className="toast">{toast}</div>}
  *
  * `afterChange` is called after every successful toggle (reload lists, etc).
@@ -56,5 +58,31 @@ export default function useTaskToggle(afterChange) {
     [afterChange, flash]
   );
 
-  return { toggleComplete, toast };
+  /**
+   * Ignore an overdue task, or restore an ignored one to open.
+   * Ignoring a repeating task schedules its next occurrence (like completing).
+   */
+  const toggleIgnore = useCallback(
+    async (task) => {
+      try {
+        if (task.is_ignored) {
+          await api.unignoreTask(task.id);
+          flash(`Restored “${task.title}”`);
+        } else {
+          const result = await api.ignoreTask(task.id);
+          flash(
+            result.next_occurrence
+              ? `Ignored. Next one scheduled for ${formatDate(result.next_occurrence.due_date)}`
+              : `Ignored “${task.title}” (find it under Ignored)`
+          );
+        }
+        await afterChange?.();
+      } catch (e) {
+        flash(`Error: ${e.message}`);
+      }
+    },
+    [afterChange, flash]
+  );
+
+  return { toggleComplete, toggleIgnore, toast };
 }

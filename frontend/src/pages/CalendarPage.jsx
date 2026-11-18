@@ -2,11 +2,21 @@
  * CalendarPage.jsx - month calendar of everything that happened to your tasks.
  *
  * Each day cell lists events of three kinds (toggle them with the checkboxes):
- *   Created   - a task was added that day
- *   Due       - a task is/was due that day
+ *   Created   - a task was added that day -- DON'T WANT THIS ON CALENDAR PAGE, ONLY IN LIST/TABLE VIEW
+ *   Due       - a task is/was due that day (today or earlier)
+ *   Upcoming  - an open task due after today (a "due" event re-labelled
+ *               on the frontend, so it gets its own color)
  *   Completed - a task was finished that day
+ *   Repeats   - ("projected") a future date an open repeating task will
+ *               recur on. Display only; clicking opens the open occurrence.
+ * Events belonging to completed or ignored tasks are shown faded (completed
+ * ones also struck through), and a task appears
+ * at most once per day (a task due and completed the same day shows only
+ * as Completed).
  * Clicking a day shows its full list on the right; clicking an event opens
- * the task in TaskDetailPanel.
+ * the task in TaskDetailPanel. The "+ Add task" button in that side section
+ * opens QuickAddTask with the selected day as the due date (and the
+ * project filter, if one is chosen, as the project).
  *
  * Data: GET /api/calendar/?start&end (api.getCalendar), built on the backend
  * in tasks/stats.py -> calendar_events(). The grid is MonthCalendar.jsx.
@@ -14,15 +24,31 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import * as api from "../api/client.js";
 import MonthCalendar from "../components/MonthCalendar.jsx";
+import QuickAddTask from "../components/QuickAddTask.jsx";
 import TaskDetailPanel from "../components/TaskDetailPanel.jsx";
 import useTaskToggle from "../hooks/useTaskToggle.js";
 import { formatDate, monthGridRange, todayISO } from "../utils/dates.js";
 
 const EVENT_TYPES = [
-  { key: "created", label: "Created" },
+  //{ key: "created", label: "Created" },
   { key: "due", label: "Due" },
+  { key: "upcoming", label: "Upcoming" },
   { key: "completed", label: "Completed" },
+  { key: "projected", label: "Repeats" },
 ];
+
+/**
+ * When one task has several events on the same day (e.g. due and completed
+ * on Nov 16), only the highest-ranked one is shown, so each task appears
+ * once per day.
+ */
+const TYPE_RANK = { created: 0, projected: 1, due: 2, upcoming: 2, completed: 3 };
+
+/** Re-label open "due" events after today as "upcoming" so they get their own color. */
+function displayType(ev, today) {
+  if (ev.type === "due" && !ev.is_completed && !ev.is_ignored && ev.date > today) return "upcoming";
+  return ev.type;
+}
 
 /** How many events fit in a day cell before showing "+N more". */
 const MAX_PER_CELL = 3;
@@ -31,10 +57,11 @@ export default function CalendarPage({ projects, refreshProjects }) {
   const now = new Date();
   const [view, setView] = useState({ year: now.getFullYear(), month: now.getMonth() });
   const [events, setEvents] = useState([]);
-  const [enabled, setEnabled] = useState({ created: true, due: true, completed: true });
+  const [enabled, setEnabled] = useState({ due: true, upcoming: true, completed: true, projected: true }); //created: true,
   const [projectFilter, setProjectFilter] = useState("");
   const [selectedDate, setSelectedDate] = useState(todayISO());
   const [selectedTaskId, setSelectedTaskId] = useState(null);
+  const [adding, setAdding] = useState(false); // is the "add task" form open?
 
   /** Fetch events covering every day visible in the month grid. */
   const loadEvents = useCallback(async () => {
@@ -49,15 +76,35 @@ export default function CalendarPage({ projects, refreshProjects }) {
   const afterChange = useCallback(async () => {
     await Promise.all([loadEvents(), refreshProjects()]);
   }, [loadEvents, refreshProjects]);
-  const { toggleComplete, toast } = useTaskToggle(afterChange);
+  const { toggleComplete, toggleIgnore, toast } = useTaskToggle(afterChange);
   const closePanel = useCallback(() => setSelectedTaskId(null), []);
 
-  /** Events grouped by date, keeping only the enabled event types. */
+  /** After the add form creates a task: close the form and reload the calendar. */
+  async function handleTaskCreated() {
+    setAdding(false);
+    await afterChange();
+  }
+
+  /**
+   * Events grouped by date: first reduced to one entry per task per day (see
+   * TYPE_RANK), then filtered by the enabled types. Merging before filtering
+   * means a task due and completed the same day is hidden entirely when
+   * "Completed" is off, rather than falling back to its "Due" event.
+   */
   const byDate = useMemo(() => {
+    const perDay = {}; // date -> { task_id -> event }
+    const today = todayISO();
+    for (const raw of events) {
+      const ev = { ...raw, type: displayType(raw, today) };
+      const day = (perDay[ev.date] ||= {});
+      const existing = day[ev.task_id];
+      if (!existing || TYPE_RANK[ev.type] > TYPE_RANK[existing.type]) day[ev.task_id] = ev;
+    }
+    // Back to date -> list, preserving the backend's sort order.
     const map = {};
-    for (const ev of events) {
-      if (!enabled[ev.type]) continue;
-      (map[ev.date] ||= []).push(ev);
+    for (const raw of events) {
+      const ev = perDay[raw.date]?.[raw.task_id];
+      if (ev && enabled[ev.type] && !map[raw.date]?.includes(ev)) (map[raw.date] ||= []).push(ev);
     }
     return map;
   }, [events, enabled]);
@@ -70,7 +117,9 @@ export default function CalendarPage({ projects, refreshProjects }) {
         {list.slice(0, MAX_PER_CELL).map((ev) => (
           <li
             key={`${ev.type}-${ev.task_id}`}
-            className={`cal-event ev-${ev.type}`}
+            className={`cal-event ev-${ev.type}${ev.is_completed ? " is-done" : ""}${
+              ev.is_ignored ? " is-ignored" : ""
+            }`}
             title={`${ev.type}: ${ev.title}`}
             onClick={(e) => {
               e.stopPropagation();
@@ -132,8 +181,27 @@ export default function CalendarPage({ projects, refreshProjects }) {
           />
 
           <section className="day-list" aria-label="Selected day">
-            <h3>{formatDate(selectedDate)}</h3>
-            {dayEvents.length === 0 && <p className="muted small">Nothing on this day.</p>}
+            <div className="day-list-header">
+              <h3>{formatDate(selectedDate)}</h3>
+              {!adding && (
+                <button className="btn btn-small" onClick={() => setAdding(true)}>
+                  + Add task
+                </button>
+              )}
+            </div>
+            {adding && (
+              <QuickAddTask
+                compact
+                autoFocus
+                defaultDueDate={selectedDate}
+                defaultProjectId={projectFilter ? Number(projectFilter) : null}
+                onCreated={handleTaskCreated}
+                onCancel={() => setAdding(false)}
+              />
+            )}
+            {dayEvents.length === 0 && !adding && (
+              <p className="muted small">Nothing on this day.</p>
+            )}
             {EVENT_TYPES.map((t) => {
               const items = dayEvents.filter((ev) => ev.type === t.key);
               if (!items.length) return null;
@@ -144,7 +212,11 @@ export default function CalendarPage({ projects, refreshProjects }) {
                   </h4>
                   <ul>
                     {items.map((ev) => (
-                      <li key={ev.task_id}>
+                      <li
+                        key={ev.task_id}
+                        className={ev.is_completed ? "is-done" : ev.is_ignored ? "is-ignored" : undefined}
+                        title={ev.is_ignored ? "Ignored" : undefined}
+                      >
                         <button className="link-btn" onClick={() => setSelectedTaskId(ev.task_id)}>
                           {ev.is_completed ? <s>{ev.title}</s> : ev.title}
                         </button>
@@ -165,6 +237,7 @@ export default function CalendarPage({ projects, refreshProjects }) {
           onClose={closePanel}
           onChanged={afterChange}
           onToggleComplete={toggleComplete}
+          onToggleIgnore={toggleIgnore}
         />
       )}
       {toast && <div className="toast" role="status">{toast}</div>}

@@ -22,8 +22,8 @@ import {
   WEEKDAY_LABELS,
   backendWeekday,
   describeRepeat,
-  presetFromTask,
-  ruleFromPreset,
+  repeatPresetFromTask,
+  repeatRuleFromPreset,
 } from "../utils/recurrence.js";
 
 /** Units for the custom rule, mapped to backend repeat_type values. */
@@ -35,7 +35,7 @@ const UNITS = [
 ];
 
 export default function RepeatEditor({ task, onSave }) {
-  const [preset, setPreset] = useState(presetFromTask(task));
+  const [preset, setPreset] = useState(repeatPresetFromTask(task));
   // Draft values for the custom form (only sent when "Apply" is clicked).
   const [interval, setRepeatInterval] = useState(task.repeat_interval || 1);
   const [unit, setUnit] = useState(task.repeat_type === "none" ? "weekly" : task.repeat_type);
@@ -47,7 +47,7 @@ export default function RepeatEditor({ task, onSave }) {
 
   // When a different task is opened, or this one is saved, reset the drafts.
   useEffect(() => {
-    setPreset(presetFromTask(task));
+    setPreset(repeatPresetFromTask(task));
     setRepeatInterval(task.repeat_interval || 1);
     setUnit(task.repeat_type === "none" ? "weekly" : task.repeat_type);
     setDays(
@@ -60,7 +60,7 @@ export default function RepeatEditor({ task, onSave }) {
   /** Dropdown change: presets save immediately; "custom" just opens the form. */
   function handlePresetChange(value) {
     setPreset(value);
-    if (value !== "custom") onSave(ruleFromPreset(value, task.due_date));
+    if (value !== "custom") onSave(repeatRuleFromPreset(value, task.due_date));
   }
 
   /** Add or remove a weekday in the custom form. */

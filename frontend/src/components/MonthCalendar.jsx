@@ -49,6 +49,8 @@ export default function MonthCalendar({
 
   return (
     <div className={`month-calendar ${compact ? "compact" : ""}`}>
+
+      {/* CALENDAR HEADER with navigation and title */}
       <div className="cal-header">
         <button className="icon-btn" onClick={() => shift(-1)} aria-label="Previous month">
           ‹
@@ -64,6 +66,7 @@ export default function MonthCalendar({
         )}
       </div>
 
+      {/* CALENDAR GRID with day headers and day cells */}
       <div className="cal-grid" role="grid">
         {DAY_HEADERS.map((d) => (
           <div key={d} className="cal-dow" role="columnheader">

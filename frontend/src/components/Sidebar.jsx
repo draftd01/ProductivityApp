@@ -21,6 +21,7 @@ const VIEWS = [
   { to: "/upcoming", label: "Upcoming", icon: "→" },
   { to: "/all", label: "All open tasks", icon: "☰" },
   { to: "/completed", label: "Completed", icon: "✓" },
+  { to: "/ignored", label: "Ignored", icon: "⊘" },
   { to: "/calendar", label: "Calendar", icon: "▦" },
   { to: "/progress", label: "Progress", icon: "↗" },
 ];

@@ -3,23 +3,27 @@
  * (due date, project, repeat, note count).
  *
  * Rendered by TaskList.jsx. Clicking the row opens the task in
- * TaskDetailPanel; clicking the checkbox toggles completion.
+ * TaskDetailPanel; clicking the checkbox toggles completion. Overdue tasks
+ * get an "Ignore" button (shown on hover); ignored tasks show when they
+ * were ignored instead of a due date.
  *
  * Props:
  *   task         - task object from the API
  *   selected     - true if this task is open in the detail panel (highlight)
  *   onSelect()   - open the detail panel for this task
  *   onToggle()   - complete / un-complete the task
+ *   onIgnore()   - ignore an overdue task (optional; hides the button if absent)
  */
 import { dueLabel, formatDateTime } from "../utils/dates.js";
 import { describeRepeat } from "../utils/recurrence.js";
 
-export default function TaskRow({ task, selected, onSelect, onToggle }) {
+export default function TaskRow({ task, selected, onSelect, onToggle, onIgnore }) {
   const repeatText = describeRepeat(task);
+  const stateClass = task.is_completed ? "done" : task.is_ignored ? "ignored" : "";
 
   return (
     <li
-      className={`task-row ${selected ? "selected" : ""} ${task.is_completed ? "done" : ""}`}
+      className={`task-row ${selected ? "selected" : ""} ${stateClass}`}
       onClick={onSelect}
     >
       <button
@@ -57,8 +61,22 @@ export default function TaskRow({ task, selected, onSelect, onToggle }) {
             {task.project_name}
           </span>
         )}
+        {task.is_overdue && onIgnore && (
+          <button
+            className="link-btn ignore-btn small"
+            title="Stop counting this as overdue (it's kept, with its notes)"
+            onClick={(e) => {
+              e.stopPropagation(); // don't also open the detail panel
+              onIgnore();
+            }}
+          >
+            Ignore
+          </button>
+        )}
         {task.is_completed ? (
           <span className="due muted">Done {formatDateTime(task.completed_at)}</span>
+        ) : task.is_ignored ? (
+          <span className="due muted">Ignored {formatDateTime(task.ignored_at)}</span>
         ) : (
           task.due_date && (
             <span className={`due ${task.is_overdue ? "overdue" : ""}`}>

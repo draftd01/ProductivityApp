@@ -75,6 +75,8 @@ class TaskSerializer(serializers.ModelSerializer):
             "updated_at",
             "is_completed",
             "completed_at",
+            "is_ignored",
+            "ignored_at",
             "repeat_type",
             "repeat_interval",
             "repeat_days_list",
@@ -85,13 +87,16 @@ class TaskSerializer(serializers.ModelSerializer):
             "is_overdue",
             "note_count",
         ]
-        # Completion is changed only through the /complete/ and /uncomplete/
-        # endpoints so the recurrence logic in Task.complete() always runs.
+        # Completion and ignoring are changed only through the /complete/,
+        # /uncomplete/, /ignore/ and /unignore/ endpoints, so the recurrence
+        # logic in Task.complete() / Task.ignore() always runs.
         read_only_fields = [
             "created_at",
             "updated_at",
             "is_completed",
             "completed_at",
+            "is_ignored",
+            "ignored_at",
             "series_id",
             "previous_occurrence",
         ]
@@ -107,9 +112,10 @@ class TaskSerializer(serializers.ModelSerializer):
         data["repeat_days_list"] = recurrence.parse_days(instance.repeat_days)
         return data
 
+    # takes dictionary of attributes and validates them before saving
     def validate(self, attrs):
         """
-        Convert `repeat_days_list` into the stored comma string and sanity
+        Convert `repeat_days_list` (list of ints representing weekdays, Monday=0) into the stored comma string and sanity
         check the repeat rule (e.g. weekly rules need valid weekdays).
         """
         days = attrs.pop("repeat_days_list", None)
@@ -139,8 +145,9 @@ class CalendarEventSerializer(serializers.Serializer):
     """
 
     date = serializers.DateField()
-    type = serializers.ChoiceField(choices=["created", "completed", "due"])
+    type = serializers.ChoiceField(choices=["created", "completed", "due", "projected"])
     task_id = serializers.IntegerField()
     title = serializers.CharField()
     is_completed = serializers.BooleanField()
+    is_ignored = serializers.BooleanField()
     project_color = serializers.CharField(allow_null=True)

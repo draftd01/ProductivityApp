@@ -9,7 +9,10 @@ Endpoint summary (all under /api/):
   GET/PATCH/DELETE    tasks/<id>/
   POST                tasks/<id>/complete/      mark done (+ spawn next repeat)
   POST                tasks/<id>/uncomplete/    re-open
+  POST                tasks/<id>/ignore/        skip an overdue task (+ spawn next repeat)
+  POST                tasks/<id>/unignore/      restore an ignored task to open
   GET                 tasks/<id>/history/       all occurrences in a repeat series
+  GET                 tasks/<id>/projection/?start=&end=  future repeat dates (display only)
   GET/POST            tasks/<id>/notes/         list / add notes on a task
   PATCH/DELETE        notes/<id>/               NoteViewSet (edit / delete a note)
   GET                 calendar/?start=&end=     CalendarView
@@ -45,6 +48,17 @@ def _parse_date(value, name):
         raise ValidationError({name: "Expected a date in YYYY-MM-DD format."})
 
 
+def _parse_range(request):
+    """Read and validate ?start=&end= (inclusive, at most ~a year apart)."""
+    start = _parse_date(request.query_params.get("start"), "start")
+    end = _parse_date(request.query_params.get("end"), "end")
+    if end < start:
+        raise ValidationError({"end": "Must be on or after start."})
+    if (end - start).days > 400:
+        raise ValidationError({"end": "Range is limited to about a year."})
+    return start, end
+
+
 class ProjectViewSet(viewsets.ModelViewSet):
     """
     Full CRUD for projects. Each project in the list includes
@@ -54,18 +68,20 @@ class ProjectViewSet(viewsets.ModelViewSet):
     serializer_class = ProjectSerializer
 
     def get_queryset(self):
-        """All projects, annotated with how many open tasks each has."""
+        """All projects, annotated with how many open (not done, not ignored) tasks each has."""
         return Project.objects.annotate(
-            open_task_count=Count("tasks", filter=Q(tasks__is_completed=False))
+            open_task_count=Count(
+                "tasks", filter=Q(tasks__is_completed=False, tasks__is_ignored=False)
+            )
         )
 
 
 class TaskViewSet(viewsets.ModelViewSet):
     """
-    CRUD for tasks plus completion, history and notes actions.
+    CRUD for tasks plus completion, ignoring, history and notes actions.
 
     List filters (query parameters), used by src/pages/TasksPage.jsx:
-      status=open|completed|all   (default: open)
+      status=open|completed|ignored|all   (default: open; open excludes ignored)
       view=today|upcoming|overdue (based on due_date)
       project=<id> | project=none (tasks with no project)
       search=<text>               (title/description contains)
@@ -88,9 +104,11 @@ class TaskViewSet(viewsets.ModelViewSet):
 
         status_filter = params.get("status", "open")
         if status_filter == "open":
-            qs = qs.filter(is_completed=False)
+            qs = qs.filter(is_completed=False, is_ignored=False)
         elif status_filter == "completed":
             qs = qs.filter(is_completed=True).order_by("-completed_at")
+        elif status_filter == "ignored":
+            qs = qs.filter(is_ignored=True).order_by("-ignored_at")
 
         view = params.get("view")
         if view == "today":
@@ -138,6 +156,35 @@ class TaskViewSet(viewsets.ModelViewSet):
         task.refresh_from_db()
         return Response({"task": TaskSerializer(task).data})
 
+    @action(detail=True, methods=["post"])
+    def ignore(self, request, pk=None):
+        """
+        POST /api/tasks/<id>/ignore/
+        Skips an overdue task: it's kept (notes included) but no longer counts
+        as open or overdue. Like `complete`, the response includes
+        `next_occurrence` for repeating tasks. 400 if the task isn't overdue.
+        """
+        task = self.get_object()
+        try:
+            next_task = task.ignore()
+        except ValueError as exc:
+            raise ValidationError({"detail": str(exc)})
+        task.refresh_from_db()
+        return Response(
+            {
+                "task": TaskSerializer(task).data,
+                "next_occurrence": TaskSerializer(next_task).data if next_task else None,
+            }
+        )
+
+    @action(detail=True, methods=["post"])
+    def unignore(self, request, pk=None):
+        """POST /api/tasks/<id>/unignore/ - restores an ignored task to open."""
+        task = self.get_object()
+        task.unignore()
+        task.refresh_from_db()
+        return Response({"task": TaskSerializer(task).data})
+
     @action(detail=True, methods=["get"])
     def history(self, request, pk=None):
         """
@@ -151,6 +198,19 @@ class TaskViewSet(viewsets.ModelViewSet):
             note_count_annotated=Count("notes")
         )
         return Response(TaskSerializer(occurrences, many=True).data)
+
+    @action(detail=True, methods=["get"])
+    def projection(self, request, pk=None):
+        """
+        GET /api/tasks/<id>/projection/?start=YYYY-MM-DD&end=YYYY-MM-DD
+        Future dates in the range on which this task's series will repeat,
+        counted from the series' open occurrence: {"dates": ["2026-11-24", ...]}.
+        Display only (nothing is created). Used by TaskCalendar.jsx.
+        """
+        task = self.get_object()
+        start, end = _parse_range(request)
+        dates = stats.series_projection(task, start, end)
+        return Response({"dates": [d.isoformat() for d in dates]})
 
     @action(detail=True, methods=["get", "post"])
     def notes(self, request, pk=None):
@@ -186,18 +246,13 @@ class NoteViewSet(
 class CalendarView(APIView):
     """
     GET /api/calendar/?start=YYYY-MM-DD&end=YYYY-MM-DD[&project=<id>]
-    Returns created/completed/due events in the date range for the month
+    Returns created/completed/due/projected events in the date range for the month
     grid on src/pages/CalendarPage.jsx.
     """
 
     def get(self, request):
         """Validate the range and return the serialized events."""
-        start = _parse_date(request.query_params.get("start"), "start")
-        end = _parse_date(request.query_params.get("end"), "end")
-        if end < start:
-            raise ValidationError({"end": "Must be on or after start."})
-        if (end - start).days > 400:
-            raise ValidationError({"end": "Range is limited to about a year."})
+        start, end = _parse_range(request)
         events = stats.calendar_events(start, end, request.query_params.get("project"))
         return Response(CalendarEventSerializer(events, many=True).data)
 

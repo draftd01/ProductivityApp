@@ -4,7 +4,7 @@
  * Layout:  [ Sidebar ] [ current page ]
  *
  * Routes (URL -> page component):
- *   /today, /upcoming, /all, /completed  -> TasksPage (different `mode`)
+ *   /today, /upcoming, /all, /completed, /ignored -> TasksPage (different `mode`)
  *   /project/:projectId                  -> TasksPage (mode="project")
  *   /calendar                            -> CalendarPage
  *   /progress                            -> ProgressPage
@@ -55,6 +55,7 @@ export default function App() {
           <Route path="/upcoming" element={<TasksPage mode="upcoming" {...shared} />} />
           <Route path="/all" element={<TasksPage mode="all" {...shared} />} />
           <Route path="/completed" element={<TasksPage mode="completed" {...shared} />} />
+          <Route path="/ignored" element={<TasksPage mode="ignored" {...shared} />} />
           <Route path="/project/:projectId" element={<TasksPage mode="project" {...shared} />} />
           <Route path="/calendar" element={<CalendarPage {...shared} />} />
           <Route path="/progress" element={<ProgressPage {...shared} />} />

@@ -1,6 +1,8 @@
 /**
  * vite.config.js - configuration for the Vite dev server and build.
  *
+ * `server.open` launches your default browser at the app's URL on startup.
+ *
  * The important part is `server.proxy`: any request the React app makes to
  * /api/... is forwarded to Django on port 8000. That means the frontend code
  * (src/api/client.js) can use relative URLs like "/api/tasks/" and the
@@ -13,6 +15,8 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    // Open the app in your default browser when `npm run dev` starts.
+    open: true,
     proxy: {
       "/api": "http://127.0.0.1:8000",
     },

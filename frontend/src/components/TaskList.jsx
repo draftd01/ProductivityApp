@@ -9,11 +9,12 @@
  *   selectedId      - id of the task open in the detail panel
  *   onSelect(task)  - open a task
  *   onToggle(task)  - complete / un-complete a task
+ *   onIgnore(task)  - ignore an overdue task (optional)
  *   emptyMessage    - text shown when there are no tasks at all
  */
 import TaskRow from "./TaskRow.jsx";
 
-export default function TaskList({ groups, selectedId, onSelect, onToggle, emptyMessage }) {
+export default function TaskList({ groups, selectedId, onSelect, onToggle, onIgnore, emptyMessage }) {
   const nonEmpty = groups.filter((g) => g.tasks.length > 0);
 
   if (nonEmpty.length === 0) {
@@ -35,6 +36,7 @@ export default function TaskList({ groups, selectedId, onSelect, onToggle, empty
                 selected={task.id === selectedId}
                 onSelect={() => onSelect(task)}
                 onToggle={() => onToggle(task)}
+                onIgnore={onIgnore ? () => onIgnore(task) : undefined}
               />
             ))}
           </ul>

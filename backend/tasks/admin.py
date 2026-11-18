@@ -20,8 +20,10 @@ class NoteInline(admin.TabularInline):
 class TaskAdmin(admin.ModelAdmin):
     """Admin list/search/filter configuration for tasks."""
 
-    list_display = ("title", "project", "due_date", "is_completed", "completed_at", "repeat_type")
-    list_filter = ("is_completed", "repeat_type", "priority", "project")
+    list_display = (
+        "title", "project", "due_date", "is_completed", "completed_at", "is_ignored", "repeat_type"
+    )
+    list_filter = ("is_completed", "is_ignored", "repeat_type", "priority", "project")
     search_fields = ("title", "description")
     inlines = [NoteInline]
 

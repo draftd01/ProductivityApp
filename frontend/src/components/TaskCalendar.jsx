@@ -5,9 +5,14 @@
  *   ● created day     ● due day     ● completed day
  * plus a short summary ("Completed 12 times") for repeating tasks.
  *
+ * For repeating tasks it also shows future repeats (hollow ring) for the
+ * month on screen.
+ *
  * Data: GET /api/tasks/<id>/history/ (api.getTaskHistory), which returns all
- * occurrences sharing the task's series_id. Rendering of the grid is
- * delegated to the reusable MonthCalendar.jsx.
+ * occurrences sharing the task's series_id, and
+ * GET /api/tasks/<id>/projection/ (api.getTaskProjection) for the future
+ * repeat dates of the visible month - refetched when the month changes.
+ * Rendering of the grid is delegated to the reusable MonthCalendar.jsx.
  *
  * Props:
  *   task - the task open in the panel. Its `updated_at` changes after every
@@ -15,7 +20,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import * as api from "../api/client.js";
-import { localDateOf, parseISODate } from "../utils/dates.js";
+import { localDateOf, monthGridRange, parseISODate } from "../utils/dates.js";
 import MonthCalendar from "./MonthCalendar.jsx";
 
 /** Event kinds and their labels; colors come from CSS classes (.mark-created ...). */
@@ -23,10 +28,12 @@ const KINDS = [
   { key: "created", label: "Created" },
   { key: "due", label: "Due" },
   { key: "completed", label: "Completed" },
+  { key: "projected", label: "Repeats" }, // only shown for repeating tasks
 ];
 
 export default function TaskCalendar({ task }) {
   const [history, setHistory] = useState([task]);
+  const [projected, setProjected] = useState([]); // "YYYY-MM-DD" strings
   // Start on the month of the due date, else the month it was created.
   const anchor = parseISODate(task.due_date) || new Date(task.created_at);
   const [view, setView] = useState({ year: anchor.getFullYear(), month: anchor.getMonth() });
@@ -41,6 +48,23 @@ export default function TaskCalendar({ task }) {
       cancelled = true;
     };
   }, [task.id, task.updated_at]);
+
+  // Future repeats for the visible month (repeating tasks only). Depends on
+  // the month on screen, so it refetches as you navigate.
+  useEffect(() => {
+    if (!task.is_recurring) {
+      setProjected([]);
+      return;
+    }
+    let cancelled = false;
+    const { start, end } = monthGridRange(view.year, view.month);
+    api.getTaskProjection(task.id, start, end).then((data) => {
+      if (!cancelled) setProjected(data.dates);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [task.id, task.updated_at, task.is_recurring, view.year, view.month]);
 
   // Jump to the right month when a different task is opened.
   useEffect(() => {
@@ -60,8 +84,11 @@ export default function TaskCalendar({ task }) {
       if (!t.is_completed) add(t.due_date, "due");
       if (t.completed_at) add(localDateOf(t.completed_at), "completed");
     }
+    for (const iso of projected) add(iso, "projected");
     return map;
-  }, [history]);
+  }, [history, projected]);
+
+  const legendKinds = task.is_recurring ? KINDS : KINDS.filter((k) => k.key !== "projected");
 
   const completedCount = history.filter((t) => t.is_completed).length;
 
@@ -83,7 +110,7 @@ export default function TaskCalendar({ task }) {
         }
       />
       <div className="legend small">
-        {KINDS.map((k) => (
+        {legendKinds.map((k) => (
           <span key={k.key} className="legend-item">
             <span className={`mark mark-${k.key}`} /> {k.label}
           </span>

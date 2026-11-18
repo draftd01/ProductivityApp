@@ -2,7 +2,8 @@
  * TaskDetailPanel.jsx - the right-hand panel that opens when you click a task.
  *
  * Sections:
- *   - Complete / delete buttons
+ *   - Complete / ignore (overdue tasks only) / delete buttons, and a banner
+ *     with a "Restore" button when the task is ignored
  *   - Editable title, description, project, priority, due date
  *   - Repeat rule            -> RepeatEditor.jsx
  *   - Timeline (created / completed timestamps) + per-task calendar
@@ -18,6 +19,7 @@
  *   onChanged() - tell the parent something changed so it can reload lists
  *   onToggleComplete(task) - completion is handled by the parent page so it
  *                 can show "next occurrence" messages; returns a Promise
+ *   onToggleIgnore(task)   - same idea for ignoring / restoring (useTaskToggle.js)
  */
 import { useEffect, useState } from "react";
 import * as api from "../api/client.js";
@@ -26,7 +28,14 @@ import NotesSection from "./NotesSection.jsx";
 import RepeatEditor from "./RepeatEditor.jsx";
 import TaskCalendar from "./TaskCalendar.jsx";
 
-export default function TaskDetailPanel({ taskId, projects, onClose, onChanged, onToggleComplete }) {
+export default function TaskDetailPanel({
+  taskId,
+  projects,
+  onClose,
+  onChanged,
+  onToggleComplete,
+  onToggleIgnore,
+}) {
   const [task, setTask] = useState(null);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -80,6 +89,12 @@ export default function TaskDetailPanel({ taskId, projects, onClose, onChanged, 
     await load();
   }
 
+  /** Ignore (overdue) or restore (ignored) via the parent, then reload. */
+  async function handleIgnoreToggle() {
+    await onToggleIgnore(task);
+    await load();
+  }
+
   /** Delete the task (with confirmation) and close the panel. */
   async function handleDelete() {
     const extra = task.is_recurring ? " Past occurrences in its history are kept." : "";
@@ -106,6 +121,15 @@ export default function TaskDetailPanel({ taskId, projects, onClose, onChanged, 
         >
           {task.is_completed ? "↺ Mark incomplete" : "✓ Mark complete"}
         </button>
+        {task.is_overdue && onToggleIgnore && (
+          <button
+            className="btn"
+            onClick={handleIgnoreToggle}
+            title="Stop counting this as overdue. It's kept, with its notes, under Ignored."
+          >
+            Ignore
+          </button>
+        )}
         <span className="spacer" />
         <button className="btn btn-danger-ghost" onClick={handleDelete}>
           Delete
@@ -116,6 +140,19 @@ export default function TaskDetailPanel({ taskId, projects, onClose, onChanged, 
       </div>
 
       {error && <div className="form-error">{error}</div>}
+
+      {task.is_ignored && (
+        <div className="ignored-banner small">
+          <span>
+            Ignored {formatDateTime(task.ignored_at)}. It doesn't count as overdue.
+          </span>
+          {onToggleIgnore && (
+            <button className="btn btn-small" onClick={handleIgnoreToggle}>
+              Restore
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Title and description save when the field loses focus. */}
       <input
@@ -184,6 +221,11 @@ export default function TaskDetailPanel({ taskId, projects, onClose, onChanged, 
         {task.is_completed && (
           <li>
             <span className="mark mark-completed" /> Completed {formatDateTime(task.completed_at)}
+          </li>
+        )}
+        {task.is_ignored && (
+          <li>
+            <span className="mark mark-ignored" /> Ignored {formatDateTime(task.ignored_at)}
           </li>
         )}
       </ul>

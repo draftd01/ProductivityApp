@@ -29,6 +29,7 @@
   /* Calendar event kinds - always shown alongside a text label. */
   --ev-created: #4f6bed;
   --ev-due: #e08a1e;
+  --ev-upcoming: #8b5cf6;
   --ev-completed: #2e9e6a;
 
   --radius: 8px;
@@ -53,6 +54,7 @@
     --warn: #f0a640;
     --ev-created: #7d93ff;
     --ev-due: #f0a640;
+    --ev-upcoming: #b49bff;
     --ev-completed: #4cc08a;
     --shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
     color-scheme: dark;
@@ -233,6 +235,16 @@ textarea { width: 100%; resize: vertical; }
 }
 .quick-add-title { flex: 1; min-width: 180px; border: none; font-size: 15px; }
 .quick-add-title:focus { outline: none; }
+.quick-add-actions { display: flex; gap: 6px; }
+/* Compact variant (Calendar page side panel): fields stacked vertically. */
+.quick-add.compact { flex-direction: column; align-items: stretch; padding: 10px; margin-bottom: 12px; }
+.quick-add.compact .quick-add-title {
+  min-width: 0;
+  border: 1px solid var(--border);
+  font-size: 14px;
+  padding: 6px 8px;
+}
+.quick-add.compact .quick-add-title:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
 .empty { color: var(--text-muted); padding: 32px 0; text-align: center; }
 
@@ -256,6 +268,14 @@ textarea { width: 100%; resize: vertical; }
 .task-row:hover { background: var(--surface-2); }
 .task-row.selected { background: var(--accent-soft); }
 .task-row.done .task-title { color: var(--text-muted); text-decoration: line-through; }
+/* Ignored tasks: muted but not struck through (they weren't done). */
+.task-row.ignored .task-title { color: var(--text-muted); font-style: italic; }
+/* "Ignore" link on overdue rows: only visible on hover/focus to keep rows calm. */
+.ignore-btn { color: var(--text-muted); visibility: hidden; }
+.task-row:hover .ignore-btn,
+.ignore-btn:focus-visible { visibility: visible; }
+.ignore-btn:hover { color: var(--text); text-decoration: underline; }
+@media (hover: none) { .ignore-btn { visibility: visible; } } /* touch screens can't hover */
 .task-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .priority-flag { color: var(--danger); font-weight: 700; margin-right: 6px; }
 .task-meta { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
@@ -301,6 +321,17 @@ textarea { width: 100%; resize: vertical; }
   padding: 16px 20px 48px;
 }
 .detail-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.ignored-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
 .detail-title {
   width: 100%;
   font-size: 20px;
@@ -366,7 +397,11 @@ textarea { width: 100%; resize: vertical; }
 .mark { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 .mark-created { background: var(--ev-created); }
 .mark-due { background: var(--ev-due); }
+.mark-upcoming { background: var(--ev-upcoming); }
+/* Projected repeats: hollow ring in the upcoming color - "will exist, doesn't yet". */
+.mark-projected { box-sizing: border-box; border: 1.5px solid var(--ev-upcoming); background: transparent; }
 .mark-completed { background: var(--ev-completed); }
+.mark-ignored { box-sizing: border-box; border: 1.5px solid var(--text-muted); background: transparent; }
 
 .month-calendar { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; }
 .cal-header { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
@@ -405,6 +440,16 @@ textarea { width: 100%; resize: vertical; }
   cursor: pointer;
 }
 .cal-event:hover { outline: 1px solid var(--border); }
+/* Events of completed and ignored tasks recede so open work stands out. */
+.cal-event.is-done,
+.cal-event.is-ignored,
+.day-group li.is-done,
+.day-group li.is-ignored { opacity: 0.5; }
+.cal-event.is-done:hover,
+.cal-event.is-ignored:hover { opacity: 0.8; }
+.cal-event.is-ignored .cal-event-title,
+.day-group li.is-ignored { font-style: italic; }
+.cal-event.ev-projected { font-style: italic; color: var(--text-muted); }
 .cal-event-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cal-more { font-size: 11px; color: var(--text-muted); padding-left: 4px; }
 
@@ -431,7 +476,13 @@ textarea { width: 100%; resize: vertical; }
   border-radius: var(--radius);
   padding: 12px;
 }
-.day-list h3 { margin-bottom: 10px; }
+.day-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
 .day-group { margin-bottom: 12px; }
 .day-group h4 { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; color: var(--text-muted); }
 .day-group li { padding: 2px 0 2px 14px; }

@@ -71,6 +71,11 @@ export default function ProgressPage() {
             tone={stats.totals.overdue > 0 ? "warn" : ""}
             hint={stats.totals.overdue > 0 ? "⚠ Needs attention" : undefined}
           />
+          <StatTile
+            label="Ignored"
+            value={stats.totals.ignored}
+            hint="Overdue tasks you chose to skip (not counted above)"
+          />
         </div>
 
         <section className="card">

@@ -52,7 +52,10 @@ export const updateProject = (id, data) =>
 export const deleteProject = (id) => request(`projects/${id}/`, { method: "DELETE" });
 
 // ---- Tasks (TasksPage.jsx, TaskDetailPanel.jsx) ----------------------------
-/** params: { status, view, project, search } - see TaskViewSet in views.py */
+/**
+ * params: { status, view, project, search } - see TaskViewSet in views.py.
+ * status: "open" (default, excludes ignored) | "completed" | "ignored" | "all"
+ */
 export const getTasks = (params) => request("tasks/", { params });
 export const getTask = (id) => request(`tasks/${id}/`);
 export const createTask = (data) => request("tasks/", { method: "POST", body: data });
@@ -61,8 +64,15 @@ export const deleteTask = (id) => request(`tasks/${id}/`, { method: "DELETE" });
 /** Returns { task, next_occurrence } - next_occurrence is set for repeating tasks. */
 export const completeTask = (id) => request(`tasks/${id}/complete/`, { method: "POST" });
 export const uncompleteTask = (id) => request(`tasks/${id}/uncomplete/`, { method: "POST" });
+/** Skip an overdue task. Returns { task, next_occurrence } like completeTask. */
+export const ignoreTask = (id) => request(`tasks/${id}/ignore/`, { method: "POST" });
+/** Restore an ignored task to open. */
+export const unignoreTask = (id) => request(`tasks/${id}/unignore/`, { method: "POST" });
 /** All occurrences of a repeating task's series (TaskCalendar.jsx). */
 export const getTaskHistory = (id) => request(`tasks/${id}/history/`);
+/** Future repeat dates of the task's series in [start, end]: { dates: ["YYYY-MM-DD", ...] }. */
+export const getTaskProjection = (id, start, end) =>
+  request(`tasks/${id}/projection/`, { params: { start, end } });
 
 // ---- Notes (NotesSection.jsx) ---------------------------------------------
 export const getNotes = (taskId) => request(`tasks/${taskId}/notes/`);

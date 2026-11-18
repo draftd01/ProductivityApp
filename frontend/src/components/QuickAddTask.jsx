@@ -1,5 +1,10 @@
 /**
- * QuickAddTask.jsx - the "Add a task…" bar at the top of TasksPage.
+ * QuickAddTask.jsx - the "Add a task…" form.
+ *
+ * Used in two places:
+ *   - TasksPage.jsx    : the full-width bar at the top of the task list
+ *   - CalendarPage.jsx : a compact, stacked version in the selected-day
+ *                        panel, pre-filled with the selected day as due date
  *
  * Type a title, optionally pick a due date and repeat preset, press Enter.
  * More details (notes, description, custom repeats) are edited afterwards in
@@ -9,18 +14,29 @@
  *   defaultDueDate   - pre-filled due date ("YYYY-MM-DD" or "") e.g. today on /today
  *   defaultProjectId - project to assign (on a project page), or null
  *   onCreated(task)  - called after the API creates the task (parent reloads list)
+ *   compact          - stack the fields vertically for narrow spaces (optional)
+ *   autoFocus        - put the cursor in the title field on mount (optional)
+ *   onCancel()       - if given, shows a Cancel button that calls it (optional)
  */
 import { useEffect, useState } from "react";
 import * as api from "../api/client.js";
-import { REPEAT_PRESETS, ruleFromPreset } from "../utils/recurrence.js";
+import { REPEAT_PRESETS, repeatRuleFromPreset } from "../utils/recurrence.js";
 
-export default function QuickAddTask({ defaultDueDate = "", defaultProjectId = null, onCreated }) {
+export default function QuickAddTask({
+  defaultDueDate = "",
+  defaultProjectId = null,
+  onCreated,
+  compact = false,
+  autoFocus = false,
+  onCancel,
+}) {
   const [title, setTitle] = useState("");
   const [dueDate, setDueDate] = useState(defaultDueDate);
   const [repeat, setRepeat] = useState("none");
   const [error, setError] = useState("");
 
-  // When the page changes (e.g. Today -> Upcoming), reset the default date.
+  // When the page changes (e.g. Today -> Upcoming), or a different day is
+  // selected on the calendar, reset the default date.
   useEffect(() => setDueDate(defaultDueDate), [defaultDueDate]);
 
   /** Submit the form: create the task, then clear the title for the next one. */
@@ -32,7 +48,7 @@ export default function QuickAddTask({ defaultDueDate = "", defaultProjectId = n
         title: title.trim(),
         due_date: dueDate || null,
         project: defaultProjectId,
-        ...ruleFromPreset(repeat, dueDate),
+        ...repeatRuleFromPreset(repeat, dueDate),
       });
       setTitle("");
       setRepeat("none");
@@ -44,12 +60,14 @@ export default function QuickAddTask({ defaultDueDate = "", defaultProjectId = n
   }
 
   return (
-    <form className="quick-add" onSubmit={handleSubmit}>
+    <form className={`quick-add ${compact ? "compact" : ""}`} onSubmit={handleSubmit}>
       <input
         className="quick-add-title"
         placeholder="Add a task…"
         value={title}
+        autoFocus={autoFocus}
         onChange={(e) => setTitle(e.target.value)}
+        onKeyDown={(e) => e.key === "Escape" && onCancel?.()}
         aria-label="New task title"
       />
       <input
@@ -66,9 +84,16 @@ export default function QuickAddTask({ defaultDueDate = "", defaultProjectId = n
           </option>
         ))}
       </select>
-      <button className="btn btn-primary" type="submit">
-        Add
-      </button>
+      <div className="quick-add-actions">
+        <button className="btn btn-primary" type="submit">
+          Add
+        </button>
+        {onCancel && (
+          <button className="btn" type="button" onClick={onCancel}>
+            Cancel
+          </button>
+        )}
+      </div>
       {error && <div className="form-error">{error}</div>}
     </form>
   );
