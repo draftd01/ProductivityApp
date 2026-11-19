@@ -11,6 +11,8 @@ Endpoint summary (all under /api/):
   POST                tasks/<id>/uncomplete/    re-open
   POST                tasks/<id>/ignore/        skip an overdue task (+ spawn next repeat)
   POST                tasks/<id>/unignore/      restore an ignored task to open
+  POST                tasks/<id>/occurrence/    complete / remove ONE day of a repeating task,
+                                                or remove it and all following days
   GET                 tasks/<id>/history/       all occurrences in a repeat series
   GET                 tasks/<id>/projection/?start=&end=  future repeat dates (display only)
   GET/POST            tasks/<id>/notes/         list / add notes on a task
@@ -184,6 +186,53 @@ class TaskViewSet(viewsets.ModelViewSet):
         task.unignore()
         task.refresh_from_db()
         return Response({"task": TaskSerializer(task).data})
+
+    @action(detail=True, methods=["post"])
+    def occurrence(self, request, pk=None):
+        """
+        POST /api/tasks/<id>/occurrence/   body: {"date": "YYYY-MM-DD", "action": ...}
+        Acts on ONE day of this task's repeat series, like Google Calendar's
+        "this event" / "this and following events". `date` can be the open
+        occurrence's due date or a projected future date. Actions:
+          "complete"         -> Task.complete_on_date: done for that day only
+          "remove"           -> Task.remove_on_date: that day disappears
+          "restore"          -> Task.restore_on_date: undo "remove"
+                                (send "move_back": true if removing moved this task)
+          "remove_following" -> Task.remove_from_date: end the series there
+        Returns {task, next_occurrence, deleted}: `task` is the row for that day
+        ("complete"), the task moved to its next date ("remove"), or null.
+        Used by CalendarPage.jsx and TaskDetailPanel.jsx via useTaskToggle.js.
+        """
+        task = self.get_object()
+        day = _parse_date(request.data.get("date"), "date")
+        action_name = request.data.get("action")
+        row = next_task = None
+        deleted = 0
+        try:
+            if action_name == "complete":
+                row, next_task = task.complete_on_date(day)
+            elif action_name == "remove":
+                row = task.remove_on_date(day)
+            elif action_name == "restore":
+                task.restore_on_date(day, move_back=bool(request.data.get("move_back")))
+                row = task
+            elif action_name == "remove_following":
+                deleted = task.remove_from_date(day)
+            else:
+                raise ValueError(
+                    'action must be "complete", "remove", "restore" or "remove_following".'
+                )
+        except ValueError as exc:
+            raise ValidationError({"detail": str(exc)})
+        if row is not None:
+            row.refresh_from_db()
+        return Response(
+            {
+                "task": TaskSerializer(row).data if row else None,
+                "next_occurrence": TaskSerializer(next_task).data if next_task else None,
+                "deleted": deleted,
+            }
+        )
 
     @action(detail=True, methods=["get"])
     def history(self, request, pk=None):

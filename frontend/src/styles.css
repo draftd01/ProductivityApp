@@ -155,6 +155,17 @@ textarea { width: 100%; resize: vertical; }
   box-shadow: var(--shadow);
   z-index: 50;
 }
+/* "Undo" inside a toast (useTaskToggle.js), e.g. after removing one day. */
+.toast-undo {
+  margin-left: 12px;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
 
 /* ---------- 3. Layout ---------- */
 .app {
@@ -486,6 +497,17 @@ textarea { width: 100%; resize: vertical; }
 .day-group { margin-bottom: 12px; }
 .day-group h4 { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; color: var(--text-muted); }
 .day-group li { padding: 2px 0 2px 14px; }
+/* Per-day "Done" / "Remove" buttons for repeating tasks (CalendarPage.jsx). */
+.day-actions { margin-left: 8px; display: inline-flex; gap: 8px; opacity: 0.75; }
+.day-group li:hover .day-actions { opacity: 1; }
+/* "Remove: This day / This & following / Cancel" choice (CalendarPage.jsx). */
+.remove-choice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 2px; color: var(--text-muted); }
+/* Same choice in the task panel (TaskDetailPanel.jsx). */
+.remove-panel-choice {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 8px 10px; margin-bottom: 12px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
 .filter-toggle { display: inline-flex; align-items: center; gap: 4px; }
 
 /* ---------- 7. Progress page ---------- */

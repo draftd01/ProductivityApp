@@ -17,6 +17,11 @@
  * the task in TaskDetailPanel. The "+ Add task" button in that side section
  * opens QuickAddTask with the selected day as the due date (and the
  * project filter, if one is chosen, as the project).
+ * Repeating tasks get "Done" / "Remove" buttons in that side list, like
+ * Google Calendar: Done completes that ONE day; Remove asks "This day" (e.g.
+ * a holiday: that day disappears, with Undo in the toast) or "This &
+ * following" (the series ends there). Both use
+ * POST /api/tasks/<id>/occurrence/ through useTaskToggle.js.
  *
  * Data: GET /api/calendar/?start&end (api.getCalendar), built on the backend
  * in tasks/stats.py -> calendar_events(). The grid is MonthCalendar.jsx.
@@ -28,6 +33,7 @@ import QuickAddTask from "../components/QuickAddTask.jsx";
 import TaskDetailPanel from "../components/TaskDetailPanel.jsx";
 import useTaskToggle from "../hooks/useTaskToggle.js";
 import { formatDate, monthGridRange, todayISO } from "../utils/dates.js";
+import { followingWarning } from "../utils/recurrence.js";
 
 const EVENT_TYPES = [
   //{ key: "created", label: "Created" },
@@ -48,6 +54,16 @@ const TYPE_RANK = { created: 0, projected: 1, due: 2, upcoming: 2, completed: 3 
 function displayType(ev, today) {
   if (ev.type === "due" && !ev.is_completed && !ev.is_ignored && ev.date > today) return "upcoming";
   return ev.type;
+}
+
+/**
+ * True for a still-to-do day of a repeating task: a projected future repeat,
+ * or the open occurrence's own due date. These get per-day "Done" / "Remove"
+ * buttons in the side list.
+ */
+function isOpenRepeat(ev) {
+  if (ev.type === "projected") return true;
+  return ev.is_recurring && !ev.is_completed && !ev.is_ignored && (ev.type === "due" || ev.type === "upcoming");
 }
 
 /** How many events fit in a day cell before showing "+N more". */
@@ -76,8 +92,26 @@ export default function CalendarPage({ projects, refreshProjects }) {
   const afterChange = useCallback(async () => {
     await Promise.all([loadEvents(), refreshProjects()]);
   }, [loadEvents, refreshProjects]);
-  const { toggleComplete, toggleIgnore, toast } = useTaskToggle(afterChange);
+  const { toggleComplete, toggleIgnore, completeDay, removeDay, toast } = useTaskToggle(afterChange);
   const closePanel = useCallback(() => setSelectedTaskId(null), []);
+
+  // The event whose "Remove: This day / This & following" choice is showing.
+  const [removing, setRemoving] = useState(null);
+  useEffect(() => setRemoving(null), [selectedDate]);
+
+  /**
+   * Remove one day ("one") or that day and all following ("following") of a
+   * repeating task. If the removed task is open in the panel and got deleted
+   * (not just moved to its next date), close the panel.
+   */
+  async function handleRemove(ev, scope) {
+    setRemoving(null);
+    if (scope === "following" && !window.confirm(followingWarning(ev.title, ev.date))) return;
+    const result = await removeDay(ev.task_id, ev.title, ev.date, scope);
+    if (result && !result.task && ev.type !== "projected" && selectedTaskId === ev.task_id) {
+      closePanel();
+    }
+  }
 
   /** After the add form creates a task: close the form and reload the calendar. */
   async function handleTaskCreated() {
@@ -220,6 +254,38 @@ export default function CalendarPage({ projects, refreshProjects }) {
                         <button className="link-btn" onClick={() => setSelectedTaskId(ev.task_id)}>
                           {ev.is_completed ? <s>{ev.title}</s> : ev.title}
                         </button>
+                        {isOpenRepeat(ev) && removing !== ev && (
+                          <span className="day-actions">
+                            <button
+                              className="link-btn small"
+                              title="Mark only this day as done"
+                              onClick={() => completeDay(ev.task_id, ev.title, ev.date)}
+                            >
+                              Done
+                            </button>
+                            <button
+                              className="link-btn small danger"
+                              title="Remove this day, or this day and all following"
+                              onClick={() => setRemoving(ev)}
+                            >
+                              Remove
+                            </button>
+                          </span>
+                        )}
+                        {removing === ev && (
+                          <span className="remove-choice small">
+                            Remove:
+                            <button className="link-btn danger" onClick={() => handleRemove(ev, "one")}>
+                              This day
+                            </button>
+                            <button className="link-btn danger" onClick={() => handleRemove(ev, "following")}>
+                              This &amp; following
+                            </button>
+                            <button className="link-btn" onClick={() => setRemoving(null)}>
+                              Cancel
+                            </button>
+                          </span>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -238,6 +304,7 @@ export default function CalendarPage({ projects, refreshProjects }) {
           onChanged={afterChange}
           onToggleComplete={toggleComplete}
           onToggleIgnore={toggleIgnore}
+          onRemoveDay={removeDay}
         />
       )}
       {toast && <div className="toast" role="status">{toast}</div>}

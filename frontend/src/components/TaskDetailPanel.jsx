@@ -3,7 +3,8 @@
  *
  * Sections:
  *   - Complete / ignore (overdue tasks only) / delete buttons, and a banner
- *     with a "Restore" button when the task is ignored
+ *     with a "Restore" button when the task is ignored. Delete on an open
+ *     repeating task offers "This day only" / "This & following".
  *   - Editable title, description, project, priority, due date
  *   - Repeat rule            -> RepeatEditor.jsx
  *   - Timeline (created / completed timestamps) + per-task calendar
@@ -20,10 +21,14 @@
  *   onToggleComplete(task) - completion is handled by the parent page so it
  *                 can show "next occurrence" messages; returns a Promise
  *   onToggleIgnore(task)   - same idea for ignoring / restoring (useTaskToggle.js)
+ *   onRemoveDay(id, title, date, scope) - removeDay from useTaskToggle.js; when
+ *                 given, Delete on an open repeating task asks "This day only"
+ *                 or "This & following" (Google Calendar style)
  */
 import { useEffect, useState } from "react";
 import * as api from "../api/client.js";
 import { formatDateTime } from "../utils/dates.js";
+import { followingWarning } from "../utils/recurrence.js";
 import NotesSection from "./NotesSection.jsx";
 import RepeatEditor from "./RepeatEditor.jsx";
 import TaskCalendar from "./TaskCalendar.jsx";
@@ -35,11 +40,13 @@ export default function TaskDetailPanel({
   onChanged,
   onToggleComplete,
   onToggleIgnore,
+  onRemoveDay,
 }) {
   const [task, setTask] = useState(null);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [error, setError] = useState("");
+  const [choosingRemove, setChoosingRemove] = useState(false); // repeating-task delete choice showing?
 
   /** Fetch the task from the API and sync the text-field drafts. */
   async function load() {
@@ -57,6 +64,7 @@ export default function TaskDetailPanel({
   // Load when the panel opens or switches to another task.
   useEffect(() => {
     setTask(null);
+    setChoosingRemove(false);
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId]);
@@ -95,13 +103,37 @@ export default function TaskDetailPanel({
     await load();
   }
 
-  /** Delete the task (with confirmation) and close the panel. */
+  /**
+   * Delete button. For an open repeating task this shows the Google
+   * Calendar-style choice (see handleRemoveDay); otherwise it deletes this
+   * one task after a confirmation and closes the panel. Deleting a
+   * completed/ignored occurrence removes just that piece of history.
+   */
   async function handleDelete() {
-    const extra = task.is_recurring ? " Past occurrences in its history are kept." : "";
-    if (!window.confirm(`Delete "${task.title}"?${extra}`)) return;
+    const isOpenRepeat = task.is_recurring && !task.is_completed && !task.is_ignored && task.due_date;
+    if (isOpenRepeat && onRemoveDay) {
+      setChoosingRemove(true);
+      return;
+    }
+    if (!window.confirm(`Delete "${task.title}"?`)) return;
     await api.deleteTask(task.id);
     onChanged?.();
     onClose();
+  }
+
+  /**
+   * "This day only" or "this & following" for an open repeating task, via
+   * the parent's removeDay (useTaskToggle.js, which shows the toast + Undo).
+   * "This day only" moves the task to its next date, so the panel reloads
+   * to show it; if there is no next date (or "following"), it closes.
+   */
+  async function handleRemoveDay(scope) {
+    setChoosingRemove(false);
+    if (scope === "following" && !window.confirm(followingWarning(task.title, task.due_date))) return;
+    const result = await onRemoveDay(task.id, task.title, task.due_date, scope);
+    if (!result) return; // Error: the toast shows it.
+    if (result.task) await load();
+    else onClose();
   }
 
   if (!task) {
@@ -138,6 +170,21 @@ export default function TaskDetailPanel({
           ×
         </button>
       </div>
+
+      {choosingRemove && (
+        <div className="remove-panel-choice small">
+          <span>This task repeats. Remove:</span>
+          <button className="btn btn-small" onClick={() => handleRemoveDay("one")}>
+            This day only
+          </button>
+          <button className="btn btn-small btn-danger-ghost" onClick={() => handleRemoveDay("following")}>
+            This &amp; following
+          </button>
+          <button className="link-btn" onClick={() => setChoosingRemove(false)}>
+            Cancel
+          </button>
+        </div>
+      )}
 
       {error && <div className="form-error">{error}</div>}
 

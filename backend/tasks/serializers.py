@@ -150,4 +150,5 @@ class CalendarEventSerializer(serializers.Serializer):
     title = serializers.CharField()
     is_completed = serializers.BooleanField()
     is_ignored = serializers.BooleanField()
+    is_recurring = serializers.BooleanField()
     project_color = serializers.CharField(allow_null=True)

@@ -68,6 +68,17 @@ export const uncompleteTask = (id) => request(`tasks/${id}/uncomplete/`, { metho
 export const ignoreTask = (id) => request(`tasks/${id}/ignore/`, { method: "POST" });
 /** Restore an ignored task to open. */
 export const unignoreTask = (id) => request(`tasks/${id}/unignore/`, { method: "POST" });
+/**
+ * Act on ONE day of a repeating task, Google Calendar style (useTaskToggle.js).
+ * date: "YYYY-MM-DD". action:
+ *   "complete"         - done for that day only
+ *   "remove"           - remove that day only
+ *   "restore"          - undo "remove" (extra: { move_back: true } if the task was moved)
+ *   "remove_following" - remove that day and every repeat after it
+ * Returns { task, next_occurrence, deleted } - see TaskViewSet.occurrence in views.py.
+ */
+export const actOnOccurrence = (id, date, action, extra = {}) =>
+  request(`tasks/${id}/occurrence/`, { method: "POST", body: { date, action, ...extra } });
 /** All occurrences of a repeating task's series (TaskCalendar.jsx). */
 export const getTaskHistory = (id) => request(`tasks/${id}/history/`);
 /** Future repeat dates of the task's series in [start, end]: { dates: ["YYYY-MM-DD", ...] }. */

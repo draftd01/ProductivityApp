@@ -11,7 +11,7 @@
  * shape. Used by RepeatEditor.jsx (editing) and TaskRow.jsx / TaskDetailPanel.jsx
  * (displaying a summary like "Every weekday").
  */
-import { parseISODate } from "./dates.js";
+import { formatDate, parseISODate } from "./dates.js";
 
 /** Weekday labels indexed by the backend's numbering (Monday=0). */
 export const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -106,4 +106,16 @@ export function describeRepeat(task) {
   }
   if (task.repeat_end_date) text += ` until ${task.repeat_end_date}`;
   return text;
+}
+
+/**
+ * Confirmation text for "Remove this & following" on a repeating task
+ * (CalendarPage.jsx and TaskDetailPanel.jsx), which can't be undone.
+ */
+export function followingWarning(title, date) {
+  return (
+    `Remove “${title}” on ${formatDate(date)} and every repeat after it?\n\n` +
+    "The series will end the day before. Completed and ignored history is kept, " +
+    "but open tasks from that day on (and their notes) are deleted."
+  );
 }

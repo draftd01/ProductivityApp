@@ -102,7 +102,7 @@ def step(base, repeat_type, interval=1, days=None):
     return None
 
 
-def next_due_date(repeat_type, interval, days, base, today, end_date=None):
+def next_due_date(repeat_type, interval, days, base, today, end_date=None, skip=()):
     """
     Compute the due date of the next occurrence of a repeating task.
 
@@ -114,6 +114,9 @@ def next_due_date(repeat_type, interval, days, base, today, end_date=None):
               completion day if it had no due date.
         today: the current local date.
         end_date: optional; if the next date would be after it, return None.
+        skip: dates that are already taken because the series already has a
+              row for them (e.g. a future day you completed or skipped ahead
+              of time from the calendar), so they are not scheduled again.
 
     Behaviour: if you complete an overdue task late, missed occurrences are
     skipped so the next one lands on today or later instead of in the past.
@@ -124,7 +127,7 @@ def next_due_date(repeat_type, interval, days, base, today, end_date=None):
     nxt = step(base, repeat_type, interval, days)
     # Skip forward past missed occurrences (bounded loop as a safety net).
     for _ in range(1000):
-        if nxt is None or nxt >= today:
+        if nxt is None or (nxt >= today and nxt not in skip):
             break
         nxt = step(nxt, repeat_type, interval, days)
 
@@ -133,7 +136,7 @@ def next_due_date(repeat_type, interval, days, base, today, end_date=None):
     return nxt
 
 
-def occurrences_between(repeat_type, interval, days, base, start, end, end_date=None):
+def occurrences_between(repeat_type, interval, days, base, start, end, end_date=None, exclude=()):
     """
     List the future occurrence dates of a rule that fall within [start, end].
 
@@ -143,6 +146,7 @@ def occurrences_between(repeat_type, interval, days, base, start, end, end_date=
     so the projection matches the dates that will really be created.
 
     `base` itself is not included - that date is the real open task.
+    Dates in `exclude` (days that already have a real row) are left out.
     Stops at `end` or `end_date`, whichever comes first.
     """
     dates = []
@@ -154,7 +158,7 @@ def occurrences_between(repeat_type, interval, days, base, start, end, end_date=
     for _ in range(5000):
         if nxt is None or nxt > end or (end_date is not None and nxt > end_date):
             break
-        if nxt >= start:
+        if nxt >= start and nxt not in exclude:
             dates.append(nxt)
         nxt = step(nxt, repeat_type, interval, days)
     return dates

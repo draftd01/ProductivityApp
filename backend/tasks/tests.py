@@ -1,13 +1,15 @@
 """
 tests.py - automated tests. Run with:  python manage.py test
 
-Four groups:
+Five groups:
   RecurrenceTests : pure date math in tasks/recurrence.py (no database)
   TaskModelTests  : Task.complete()/uncomplete() in tasks/models.py, which
                     create and clean up the next occurrence of repeating tasks
   ProjectionTests : projected future repeats for the calendars (stats.py)
   IgnoreTests     : Task.ignore()/unignore() and how ignored tasks are
                     excluded from open/overdue counts and lists
+  SingleDayTests  : completing or removing one day of a repeating task,
+                    or removing it and all following days (Google Calendar style)
 """
 from datetime import date, timedelta
 
@@ -15,7 +17,7 @@ from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
 from . import recurrence, stats
-from .models import Note, Task
+from .models import Note, SkippedDate, Task
 
 WEEKDAYS = [0, 1, 2, 3, 4]
 
@@ -240,3 +242,101 @@ class IgnoreTests(TestCase):
     def test_ignore_endpoint_rejects_non_overdue(self):
         task = Task.objects.create(title="Future", due_date=self.today + timedelta(days=2))
         self.assertEqual(self.client.post(f"/api/tasks/{task.id}/ignore/").status_code, 400)
+
+
+class SingleDayTests(TestCase):
+    """One day of a repeating task: complete_on_date / remove_on_date / remove_from_date."""
+
+    def setUp(self):
+        self.today = timezone.localdate()
+        self.task = Task.objects.create(title="Run", due_date=self.today, repeat_type="daily")
+
+    def day(self, n):
+        return self.today + timedelta(days=n)
+
+    def projected(self, days=5):
+        return stats.series_projection(self.task, self.today, self.day(days))
+
+    def test_remove_future_day_hides_only_that_day(self):
+        """Removing day 3 leaves no row behind and only day 3 disappears."""
+        self.assertIsNone(self.task.remove_on_date(self.day(3)))
+        self.assertEqual(Task.objects.count(), 1)
+        self.assertTrue(SkippedDate.objects.filter(date=self.day(3)).exists())
+        self.assertEqual(self.projected(), [self.day(1), self.day(2), self.day(4), self.day(5)])
+        events = stats.calendar_events(self.today, self.day(5))
+        self.assertFalse([e for e in events if e["date"] == self.day(3)])
+
+    def test_series_steps_over_removed_and_completed_days(self):
+        """Day 1 completed ahead, day 2 removed: completing today schedules day 3."""
+        self.task.complete_on_date(self.day(1))
+        self.task.remove_on_date(self.day(2))
+        nxt = self.task.complete()
+        self.assertEqual(nxt.due_date, self.day(3))
+        self.assertEqual(Task.objects.filter(series_id=self.task.series_id, is_completed=False).count(), 1)
+
+    def test_remove_open_occurrence_moves_it_and_restore_moves_back(self):
+        """Removing today moves the open task (and its notes) to tomorrow; undo reverts."""
+        Note.objects.create(task=self.task, body="keep me")
+        moved = self.task.remove_on_date(self.today)
+        self.assertEqual(moved.pk, self.task.pk)
+        self.assertEqual(moved.due_date, self.day(1))
+        self.assertEqual(moved.notes.count(), 1)
+        moved.restore_on_date(self.today, move_back=True)
+        moved.refresh_from_db()
+        self.assertEqual(moved.due_date, self.today)
+        self.assertFalse(SkippedDate.objects.exists())
+
+    def test_remove_following_ends_series(self):
+        """Removing day 2 and following: series ends on day 1, history kept."""
+        self.task.complete()  # Today done -> open occurrence on day 1.
+        self.task.remove_from_date(self.day(2))
+        self.assertEqual(self.projected(10), [])
+        open_rows = Task.objects.filter(series_id=self.task.series_id, is_completed=False)
+        self.assertEqual([t.due_date for t in open_rows], [self.day(1)])
+        self.assertEqual(open_rows[0].repeat_end_date, self.day(1))
+        self.assertIsNone(open_rows[0].complete())  # Nothing after the end.
+        self.assertTrue(Task.objects.filter(pk=self.task.pk, is_completed=True).exists())
+
+    def test_remove_following_from_open_occurrence_deletes_it(self):
+        self.assertEqual(self.task.remove_from_date(self.today), 1)
+        self.assertFalse(Task.objects.exists())
+
+    def test_rejects_dates_not_in_series(self):
+        weekly = Task.objects.create(title="Weekly", due_date=self.today, repeat_type="weekly",
+                                     repeat_days=str(self.today.weekday()))
+        with self.assertRaises(ValueError):
+            weekly.remove_on_date(self.day(1))
+        with self.assertRaises(ValueError):
+            self.task.complete_on_date(self.day(-1))  # Past: not projected.
+        with self.assertRaises(ValueError):
+            Task.objects.create(title="Once", due_date=self.today).remove_on_date(self.today)
+
+    def test_reopened_future_day_does_not_fork_series(self):
+        """Re-opening then re-completing a day done ahead doesn't start a 2nd chain."""
+        row, _ = self.task.complete_on_date(self.day(2))
+        row.uncomplete()
+        self.assertIsNone(row.complete())
+        self.assertEqual(Task.objects.filter(series_id=self.task.series_id).count(), 2)
+
+    def test_calendar_shows_early_completion_on_its_day(self):
+        """Day 2 completed ahead: it's 'completed' on day 2, not 'projected' or 'due'."""
+        row, _ = self.task.complete_on_date(self.day(2))
+        events = stats.calendar_events(self.today, self.day(3))
+        on_day2 = {(e["type"], e["task_id"]) for e in events if e["date"] == self.day(2)}
+        self.assertEqual(on_day2, {("completed", row.id)})
+
+    def test_occurrence_endpoint(self):
+        url = f"/api/tasks/{self.task.id}/occurrence/"
+
+        def post(**body):
+            return self.client.post(url, body, content_type="application/json")
+
+        resp = post(date=self.day(1).isoformat(), action="remove")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNone(resp.json()["task"])
+        self.assertEqual(post(date=self.day(1).isoformat(), action="restore").status_code, 200)
+        self.assertFalse(SkippedDate.objects.exists())
+        self.assertEqual(post(date=self.day(1).isoformat(), action="complete").json()["task"]["is_completed"], True)
+        self.assertEqual(post(date=self.day(3).isoformat(), action="remove_following").json()["deleted"], 0)
+        self.assertEqual(post(date="nope", action="remove").status_code, 400)
+        self.assertEqual(post(date=self.today.isoformat(), action="explode").status_code, 400)

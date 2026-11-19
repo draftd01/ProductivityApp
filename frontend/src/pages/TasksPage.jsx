@@ -133,7 +133,7 @@ export default function TasksPage({ mode, projects, refreshProjects }) {
     await Promise.all([loadTasks(), refreshProjects()]);
   }, [loadTasks, refreshProjects]);
 
-  const { toggleComplete, toggleIgnore, toast } = useTaskToggle(afterChange);
+  const { toggleComplete, toggleIgnore, removeDay, toast } = useTaskToggle(afterChange);
   const closePanel = useCallback(() => setSelectedId(null), []);
 
   /** Decide the groups shown by TaskList for the current mode. */
@@ -212,6 +212,7 @@ export default function TasksPage({ mode, projects, refreshProjects }) {
           onChanged={afterChange}
           onToggleComplete={toggleComplete}
           onToggleIgnore={toggleIgnore}
+          onRemoveDay={removeDay}
         />
       )}
 

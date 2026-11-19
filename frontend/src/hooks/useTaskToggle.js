@@ -9,27 +9,31 @@
  *   3. let the page reload its data
  *
  * Usage:
- *   const { toggleComplete, toggleIgnore, toast } = useTaskToggle(afterChange);
+ *   const { toggleComplete, toggleIgnore, completeDay, removeDay, toast } = useTaskToggle(afterChange);
  *   ...
  *   <button onClick={() => toggleComplete(task)}>
  *   <button onClick={() => toggleIgnore(task)}>   // overdue or ignored tasks
- *   {toast && <div className="toast">{toast}</div>}
+ *   <button onClick={() => removeDay(id, title, date, "one")}>  // repeating tasks
+ *   {toast && <div className="toast">{toast}</div>}   // may include an Undo button
  *
  * `afterChange` is called after every successful toggle (reload lists, etc).
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createElement, Fragment, useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../api/client.js";
 import { formatDate } from "../utils/dates.js";
 
 export default function useTaskToggle(afterChange) {
-  const [toast, setToast] = useState("");
+  const [toast, setToast] = useState(null); // { text, undo? } or null
   const timer = useRef(null);
 
-  /** Show a message for a few seconds. */
-  const flash = useCallback((message) => {
-    setToast(message);
+  /**
+   * Show a message for a few seconds. If `undo` (a function) is given, the
+   * message gets an Undo button and stays a little longer.
+   */
+  const flash = useCallback((text, undo = null) => {
+    setToast({ text, undo });
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => setToast(""), 3500);
+    timer.current = setTimeout(() => setToast(null), undo ? 7000 : 3500);
   }, []);
 
   // Clear the pending timer if the page unmounts.
@@ -84,5 +88,88 @@ export default function useTaskToggle(afterChange) {
     [afterChange, flash]
   );
 
-  return { toggleComplete, toggleIgnore, toast };
+  /**
+   * Complete only the occurrence of a repeating task on `date` (the Calendar's
+   * per-day "Done" button). `taskId` is any task in the series, e.g. the one
+   * a projected event points at.
+   */
+  const completeDay = useCallback(
+    async (taskId, title, date) => {
+      try {
+        await api.actOnOccurrence(taskId, date, "complete");
+        flash(`Completed “${title}” for ${formatDate(date)}`);
+        await afterChange?.();
+      } catch (e) {
+        flash(`Error: ${e.message}`);
+      }
+    },
+    [afterChange, flash]
+  );
+
+  /**
+   * Remove one day of a repeating task, Google Calendar style.
+   *   scope "one"       - only `date` disappears; the toast offers Undo
+   *   scope "following" - `date` and every repeat after it (series ends)
+   * Used by CalendarPage.jsx and TaskDetailPanel.jsx. Returns the API result
+   * ({ task, ... }; `task` is set if the open task was moved to its next
+   * date), or null on error.
+   */
+  const removeDay = useCallback(
+    async (taskId, title, date, scope) => {
+      try {
+        if (scope === "following") {
+          await api.actOnOccurrence(taskId, date, "remove_following");
+          flash(`Removed “${title}” from ${formatDate(date)} onward`);
+          await afterChange?.();
+          return { task: null };
+        }
+        const result = await api.actOnOccurrence(taskId, date, "remove");
+        // Undo: bring the day back (and move the task back if it was moved).
+        const undo = async () => {
+          try {
+            const moved = result.task;
+            await api.actOnOccurrence(moved ? moved.id : taskId, date, "restore", {
+              move_back: Boolean(moved),
+            });
+            flash(`Restored “${title}” on ${formatDate(date)}`);
+            await afterChange?.();
+          } catch (e) {
+            flash(`Error: ${e.message}`);
+          }
+        };
+        flash(`Removed “${title}” on ${formatDate(date)} only`, undo);
+        await afterChange?.();
+        return result;
+      } catch (e) {
+        flash(`Error: ${e.message}`);
+        return null;
+      }
+    },
+    [afterChange, flash]
+  );
+
+  // The toast as something a page can render: the text, plus an Undo
+  // button when the action can be undone. (createElement is what JSX
+  // compiles to; this file is .js, so JSX isn't available here.)
+  const toastNode = toast
+    ? createElement(
+        Fragment,
+        null,
+        toast.text,
+        toast.undo &&
+          createElement(
+            "button",
+            {
+              className: "toast-undo",
+              onClick: () => {
+                setToast(null);
+                toast.undo();
+              },
+            },
+            "Undo"
+          )
+      )
+    : null;
+
+  return { toggleComplete, toggleIgnore, completeDay, removeDay, toast: toastNode };
 }

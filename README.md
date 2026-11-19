@@ -9,6 +9,7 @@ A single-user task tracker, loosely modeled on Asana. The backend is Django + Dj
 - <u>**Repeating tasks**</u>: every day, every weekday (Mon–Fri), every weekend, weekly, monthly or yearly. A custom option lets you pick every *N* days/weeks/months/years, choose specific weekdays and set an end date.
 - <u>**Completed tasks are kept.**</u> Completing a task records `completed_at`. Completing a repeating task also schedules the next occurrence, so you get a full history of every completion.
 - <u>**Ignoring overdue tasks.**</u> If a task is past due and you've decided to skip it, click **Ignore**. It stays in the database with its notes, appears under **Ignored** in the sidebar, and no longer counts as overdue. Ignoring a repeating task still schedules its next occurrence. **Restore** reopens an ignored task.
+- <u>**Changing one day of a repeating task (like Google Calendar).**</u> On the Calendar, each upcoming day of a repeating task in the selected-day list has **Done** (complete that day only) and **Remove**. Remove asks **This day** (e.g. a holiday or vacation: the day disappears, and the message at the bottom offers **Undo**) or **This & following** (the series ends the day before; completed history is kept). **Delete** in the task panel offers the same choice for repeating tasks.
 - <u>**Notes**</u> under each task, with timestamps. You can edit and delete them.
 - <u>**Per-task calendar**</u> in the task panel that marks the days the task was created, is due and was completed, including every completion of a repeating task.
 - <u>**Calendar page**</u> with a month view of everything created, due and completed. You can filter it by event type or project.
@@ -85,6 +86,7 @@ Shared frontend helpers:
 | POST | `/api/tasks/<id>/uncomplete/` | reopen |
 | POST | `/api/tasks/<id>/ignore/` | ignore an overdue task (returns `next_occurrence` for repeating tasks; 400 if not overdue) |
 | POST | `/api/tasks/<id>/unignore/` | restore an ignored task to open |
+| POST | `/api/tasks/<id>/occurrence/` | act on one day of a repeating task: `{"date": "YYYY-MM-DD", "action": "complete"}`; other actions: `"remove"`, `"restore"` (undo remove), `"remove_following"` |
 | GET | `/api/tasks/<id>/history/` | every occurrence in a repeat series |
 | GET/POST | `/api/tasks/<id>/notes/` | list / add notes |
 | PATCH/DELETE | `/api/notes/<id>/` | edit / delete a note |

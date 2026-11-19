@@ -6,7 +6,7 @@ Handy for inspecting or bulk-fixing data directly; the React app doesn't use it.
 """
 from django.contrib import admin
 
-from .models import Note, Project, Task
+from .models import Note, Project, SkippedDate, Task
 
 
 class NoteInline(admin.TabularInline):
@@ -40,3 +40,10 @@ class NoteAdmin(admin.ModelAdmin):
     """Admin list configuration for notes."""
 
     list_display = ("task", "body", "created_at")
+
+
+@admin.register(SkippedDate)
+class SkippedDateAdmin(admin.ModelAdmin):
+    """Removed days of repeating tasks ("remove this day only")."""
+
+    list_display = ("date", "series_id", "created_at")

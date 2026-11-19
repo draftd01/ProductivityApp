@@ -15,7 +15,7 @@ from datetime import timedelta
 from django.utils import timezone
 
 from . import recurrence
-from .models import Task
+from .models import SkippedDate, Task
 
 
 def _local_date(dt):
@@ -23,7 +23,7 @@ def _local_date(dt):
     return timezone.localtime(dt).date()
 
 
-def projected_dates(task, start, end):
+def projected_dates(task, start, end, taken=None):
     """
     Future dates (within [start, end]) on which an open repeating task will
     recur, counting from its due date. Display only - nothing is created.
@@ -31,9 +31,13 @@ def projected_dates(task, start, end):
     Only dates from today onward are returned: completing an overdue task
     skips missed dates (recurrence.next_due_date), so past projections would
     never become real. Tasks with no due date have nothing to count from.
+    Taken days (`taken`, see Task.taken_dates) are left out: days that
+    already have a row (e.g. completed ahead of time) and removed days.
     """
     if not task.is_open or not task.is_recurring or task.due_date is None:
         return []
+    if taken is None:
+        taken = task.taken_dates()
     return recurrence.occurrences_between(
         task.repeat_type,
         task.repeat_interval,
@@ -42,36 +46,46 @@ def projected_dates(task, start, end):
         start=max(start, timezone.localdate()),
         end=end,
         end_date=task.repeat_end_date,
+        exclude=taken,
     )
 
 
-def _latest_open_per_series(qs):
+def _projection_bases(qs):
     """
-    The open occurrence with the latest due date for each repeating series in
-    `qs`. Normally a series has one open occurrence; this guards against
-    duplicates (e.g. an old occurrence re-opened) projecting twice.
+    For each repeating series in `qs`, the open occurrence with the EARLIEST
+    due date: the one that carries the schedule forward. A series normally
+    has one open occurrence, but can have more (an old occurrence re-opened,
+    or a future day completed ahead of time and then re-opened); those extra
+    rows show up as their own events, and projections skip their dates.
     """
-    latest = {}
+    bases = {}
     open_repeating = qs.filter(
         is_completed=False, is_ignored=False, due_date__isnull=False
     ).exclude(
         repeat_type=recurrence.REPEAT_NONE
     )
     for task in open_repeating:
-        current = latest.get(task.series_id)
-        if current is None or task.due_date > current.due_date:
-            latest[task.series_id] = task
-    return list(latest.values())
+        current = bases.get(task.series_id)
+        if current is None or task.due_date < current.due_date:
+            bases[task.series_id] = task
+    return list(bases.values())
+
+
+def projection_base(series_id):
+    """The open occurrence a series' projections count from, or None."""
+    bases = _projection_bases(Task.objects.filter(series_id=series_id))
+    return bases[0] if bases else None
 
 
 def series_projection(task, start, end):
     """
     Projected dates for the series `task` belongs to, counted from the
     series' current open occurrence - so it works even when `task` is an
-    older, completed occurrence. Used by the per-task calendar.
+    older, completed occurrence. Used by the per-task calendar and by
+    Task._row_on (to check a day really is a projected one).
     """
-    open_tasks = _latest_open_per_series(Task.objects.filter(series_id=task.series_id))
-    return projected_dates(open_tasks[0], start, end) if open_tasks else []
+    base = projection_base(task.series_id)
+    return projected_dates(base, start, end) if base else []
 
 
 def calendar_events(start, end, project_id=None):
@@ -80,8 +94,12 @@ def calendar_events(start, end, project_id=None):
     between `start` and `end` (inclusive dates), plus "projected" events for
     future repeats of open repeating tasks (see projected_dates).
 
-    Each event: {date, type, task_id, title, is_completed, is_ignored, project_color}.
+    Each event: {date, type, task_id, title, is_completed, is_ignored,
+    is_recurring, project_color}.
     Ignored tasks still appear (so they can be opened), flagged with is_ignored.
+    A task completed BEFORE its due date shows as "completed" on its due
+    date too (instead of a struck-through "due"), so a day you finished
+    ahead of time reads as done on that day.
     The frontend groups these by date in src/pages/CalendarPage.jsx.
     """
     qs = Task.objects.select_related("project")
@@ -99,6 +117,7 @@ def calendar_events(start, end, project_id=None):
                 "title": task.title,
                 "is_completed": task.is_completed,
                 "is_ignored": task.is_ignored,
+                "is_recurring": task.is_recurring,
                 "project_color": task.project.color if task.project else None,
             }
         )
@@ -109,11 +128,25 @@ def calendar_events(start, end, project_id=None):
     for task in qs.filter(completed_at__date__range=(start, end)):
         add(task, _local_date(task.completed_at), "completed")
     for task in qs.filter(due_date__range=(start, end)):
-        add(task, task.due_date, "due")
+        done_early = task.completed_at and _local_date(task.completed_at) < task.due_date
+        add(task, task.due_date, "completed" if done_early else "due")
     # Future repeats of open repeating tasks. They point at the open task, so
     # clicking one opens the occurrence you can actually edit.
-    for task in _latest_open_per_series(qs):
-        for d in projected_dates(task, start, end):
+    bases = _projection_bases(qs)
+    # series_id -> taken days (rows + removed days), see Task.taken_dates.
+    # Built with two queries for all series instead of two per series.
+    series_ids = [t.series_id for t in bases]
+    taken = {}
+    for series_id, day in Task.objects.filter(
+        series_id__in=series_ids, due_date__isnull=False
+    ).values_list("series_id", "due_date"):
+        taken.setdefault(series_id, set()).add(day)
+    for series_id, day in SkippedDate.objects.filter(series_id__in=series_ids).values_list(
+        "series_id", "date"
+    ):
+        taken.setdefault(series_id, set()).add(day)
+    for task in bases:
+        for d in projected_dates(task, start, end, taken.get(task.series_id, set())):
             add(task, d, "projected")
 
     events.sort(key=lambda e: (e["date"], e["type"], e["title"].lower()))
